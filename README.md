@@ -13,6 +13,6 @@ Puedes acceder al documento detallado del reporte técnico aquí:
 [📄 Ver informe PDF (LABORATORIO 08 CGVCM.pdf)](LABORATORIO%2008%20CGVCM.pdf)
 
 ## Proyecto y Código Fuente
-Este repositorio contiene la estructura completa del proyecto. Puedes explorar el código fuente, los recursos en la carpeta `Assets`, o revisar directamente la versión compilada del avance:
+Este repositorio contiene la estructura completa del proyecto. Puedes explorar el código fuente, los recursos en la carpeta `Assets`, o revisar directamente la versión compilada del avance en la sección de *Releases*:
 
-[📁 Acceder a la versión compilada (Compilado/)](Compilado/)
+[📦 Ver y descargar Release (Version 1.0)](https://github.com/TAYTOS/LAB08-ProyectoFinal/releases/tag/versiones)
