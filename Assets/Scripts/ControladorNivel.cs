@@ -1,9 +1,16 @@
 using UnityEngine;
 using TMPro;
 using System.Collections;
+using System.Collections.Generic;
 
 public class ControladorNivel : MonoBehaviour
 {
+    public static ControladorNivel Instancia;
+
+    void Awake()
+    {
+        Instancia = this;
+    }
     [Header("Textos del Tutorial (GameObjects)")]
     public GameObject textoMision;
     public GameObject textoInstruccion;
@@ -18,6 +25,9 @@ public class ControladorNivel : MonoBehaviour
     public float tiempoVisible = 5f; // para cada texto en pantalla
 
     public bool juegoTerminado { get; private set; } = false;
+
+    [HideInInspector]
+    public List<GameObject> barrerasSalida = new List<GameObject>();
 
     void Start()
     {
@@ -75,9 +85,24 @@ public class ControladorNivel : MonoBehaviour
         if (textoDerrota != null) textoDerrota.SetActive(false);
     }
 
-    // El script de interacción llamará aquí cuando veas el botiquín
+    // El script de interacción llamará aquí cuando consigas todos los keynotes
+    public void DesbloquearSalida()
+    {
+        // En lugar de ganar directamente, destruimos las barreras de la sala final
+        foreach (var barrera in barrerasSalida)
+        {
+            if (barrera != null) Destroy(barrera);
+        }
+        barrerasSalida.Clear();
+        
+        Debug.Log("¡Salida Desbloqueada! Dirígete a la Zona Segura Final.");
+        // Opcional: Mostrar un mensaje en pantalla indicando que escapen
+    }
+
+    // El trigger de la zona segura final llamará a esto
     public void GanarJuego()
     {
+        if (juegoTerminado) return;
         ApagarTodosLosTextos();
         if (textoVictoria != null) textoVictoria.SetActive(true);
         juegoTerminado = true;

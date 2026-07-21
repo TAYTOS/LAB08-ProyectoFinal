@@ -180,7 +180,7 @@ public class InteraccionLuz : MonoBehaviour
                         {
                             if (controlador != null && !controlador.juegoTerminado)
                             {
-                                controlador.GanarJuego();
+                                controlador.DesbloquearSalida();
                             }
                         }
                     }
