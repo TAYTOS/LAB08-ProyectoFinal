@@ -47,9 +47,20 @@ public class ProceduralLevelGenerator : MonoBehaviour
     [Tooltip("Si están vacíos, se usarán Cubos generados por código.")]
     public GameObject wallPrefab;
     public GameObject floorPrefab;
-    public GameObject trapPrefab;
-    public GameObject keyPrefab;
-    public GameObject padPrefab;
+
+    [Header("Misiones (Keynotes)")]
+    [Tooltip("Prefab del Panel de Misiones para pegar en la pared")]
+    public GameObject keynotePrefab;
+    [Tooltip("Cantidad exacta de Keynotes que se generarán en el laberinto.")]
+    public int numberOfKeynotes = 5;
+
+    [Header("Objetos de Entorno Aleatorios")]
+    [Tooltip("Prefabs de props (sillas, mesas, monitores, etc.)")]
+    public GameObject[] objectPrefabs;
+    [Tooltip("Cantidad MÍNIMA TOTAL de objetos que aparecerán en todo el nivel")]
+    public int minTotalObjects = 15;
+    [Tooltip("Cantidad MÁXIMA TOTAL de objetos que aparecerán en todo el nivel")]
+    public int maxTotalObjects = 40;
     
     [Header("Marcadores Visuales")]
     public Color startRoomColor = Color.green;
@@ -62,8 +73,8 @@ public class ProceduralLevelGenerator : MonoBehaviour
     private BSPNode startRoom;
     private BSPNode endRoom;
 
-    private enum CellType { Empty, Floor, Wall, Door }
-    private CellType[,] grid;
+    public enum CellType { Empty, Floor, Wall, Door }
+    public CellType[,] grid;
     private List<BSPNode> leafNodes;
     private GameObject levelParent;
 
@@ -80,10 +91,55 @@ public class ProceduralLevelGenerator : MonoBehaviour
         public float archetypeIntensity = 0f;
     }
 
+    public static ProceduralLevelGenerator Instance;
+    
+    [Header("Progresión del Juego")]
+    public static int currentLevel = 0; // Se mantiene entre recargas de escena
+
+    void Awake()
+    {
+        if (Instance == null) Instance = this;
+        else Destroy(this);
+    }
+
     void Start()
     {
+        ConfigurarDificultadNivel();
         ConfigurarEntornoOscuro();
         GenerateLevel();
+    }
+
+    void ConfigurarDificultadNivel()
+    {
+        Debug.Log("Iniciando Nivel " + currentLevel);
+        
+        if (currentLevel == 0)
+        {
+            // Nivel 0 (Tutorial/Introducción)
+            mapWidth = 20;
+            mapDepth = 20;
+            numberOfKeynotes = 1;
+        }
+        else
+        {
+            // Nivel 1 en adelante (Niveles reales)
+            mapWidth = 80;
+            mapDepth = 80;
+            
+            // Aumentar un poco las keynotes según el nivel si se desea, por ahora base 5
+            numberOfKeynotes = 5 + (currentLevel - 1); 
+
+            // Jugar con los valores de los arquetipos de forma aleatoria
+            foreach (var archetype in archetypeSettings)
+            {
+                // Excepto el cuarto vacío (Normal), a los especiales les damos locura
+                if (archetype.archetype != RoomArchetype.Normal && archetype.archetype != RoomArchetype.Empty)
+                {
+                    archetype.baseProbability = Random.Range(0.1f, 0.7f); // Qué tan frecuente aparece
+                    archetype.similarityPeak = Random.Range(0.3f, 1.0f);  // Qué tan intenso es
+                }
+            }
+        }
     }
 
     void ConfigurarEntornoOscuro()
@@ -465,6 +521,28 @@ public class ProceduralLevelGenerator : MonoBehaviour
                         wallMat.SetFloat("_Glossiness", 0f);
                         wallMat.SetFloat("_Metallic", 0f);
                     }
+
+                    // --- Lógica de Keynotes en las paredes ---
+                    if (keynotePrefab != null && Random.value < 0.05f) // 5% de probabilidad por pared
+                    {
+                        bool facesFloor = false;
+                        Vector3 keynoteRotation = Vector3.zero;
+                        
+                        // Revisamos celdas adyacentes para ver hacia dónde "mira" la pared (donde hay piso)
+                        if (z > 0 && grid[x, z - 1] == CellType.Floor) { facesFloor = true; keynoteRotation = new Vector3(0, 180, 0); }
+                        else if (z < mapDepth - 1 && grid[x, z + 1] == CellType.Floor) { facesFloor = true; keynoteRotation = new Vector3(0, 0, 0); }
+                        else if (x > 0 && grid[x - 1, z] == CellType.Floor) { facesFloor = true; keynoteRotation = new Vector3(0, -90, 0); }
+                        else if (x < mapWidth - 1 && grid[x + 1, z] == CellType.Floor) { facesFloor = true; keynoteRotation = new Vector3(0, 90, 0); }
+
+                        if (facesFloor)
+                        {
+                            // Instanciamos el Keynote a la altura de los ojos aprox.
+                            GameObject keynote = Instantiate(keynotePrefab, pos + Vector3.up * 1.5f, Quaternion.Euler(keynoteRotation));
+                            keynote.transform.SetParent(parentTransform);
+                            // Desplazamos un poco en su Forward local para que no sufra z-fighting con la pared
+                            keynote.transform.position += keynote.transform.forward * (cellSize * 0.49f);
+                        }
+                    }
                 }
             }
         }
@@ -474,18 +552,39 @@ public class ProceduralLevelGenerator : MonoBehaviour
     {
         RectInt r = node.room;
         int count = 0;
+
+        // Borde Inferior (y)
+        bool inDoor = false;
         for(int x = r.x; x < r.x + r.width; x++) {
-            if (x >= 0 && x < mapWidth) {
-                if (r.y >= 0 && r.y < mapDepth && grid[x, r.y] == CellType.Door) count++;
-                if (r.y + r.height - 1 >= 0 && r.y + r.height - 1 < mapDepth && grid[x, r.y + r.height - 1] == CellType.Door) count++;
-            }
+            if (x >= 0 && x < mapWidth && r.y >= 0 && r.y < mapDepth && grid[x, r.y] == CellType.Door) {
+                if (!inDoor) { count++; inDoor = true; }
+            } else inDoor = false;
         }
+
+        // Borde Superior (y + height - 1)
+        inDoor = false;
+        for(int x = r.x; x < r.x + r.width; x++) {
+            if (x >= 0 && x < mapWidth && r.y + r.height - 1 >= 0 && r.y + r.height - 1 < mapDepth && grid[x, r.y + r.height - 1] == CellType.Door) {
+                if (!inDoor) { count++; inDoor = true; }
+            } else inDoor = false;
+        }
+
+        // Borde Izquierdo (x)
+        inDoor = false;
         for(int z = r.y; z < r.y + r.height; z++) {
-            if (z >= 0 && z < mapDepth) {
-                if (r.x >= 0 && r.x < mapWidth && grid[r.x, z] == CellType.Door) count++;
-                if (r.x + r.width - 1 >= 0 && r.x + r.width - 1 < mapWidth && grid[r.x + r.width - 1, z] == CellType.Door) count++;
-            }
+            if (z >= 0 && z < mapDepth && r.x >= 0 && r.x < mapWidth && grid[r.x, z] == CellType.Door) {
+                if (!inDoor) { count++; inDoor = true; }
+            } else inDoor = false;
         }
+
+        // Borde Derecho (x + width - 1)
+        inDoor = false;
+        for(int z = r.y; z < r.y + r.height; z++) {
+            if (z >= 0 && z < mapDepth && r.x + r.width - 1 >= 0 && r.x + r.width - 1 < mapWidth && grid[r.x + r.width - 1, z] == CellType.Door) {
+                if (!inDoor) { count++; inDoor = true; }
+            } else inDoor = false;
+        }
+
         return count;
     }
 
@@ -644,19 +743,7 @@ public class ProceduralLevelGenerator : MonoBehaviour
                 rd.geometryContainer.transform.SetParent(roomTrigger.transform);
             }
             
-            rd.entranceCount = 0;
-            for(int x = r.x; x < r.x + r.width; x++) {
-                if (x >= 0 && x < mapWidth) {
-                    if (r.y >= 0 && r.y < mapDepth && grid[x, r.y] == CellType.Door) rd.entranceCount++;
-                    if (r.y + r.height - 1 >= 0 && r.y + r.height - 1 < mapDepth && grid[x, r.y + r.height - 1] == CellType.Door) rd.entranceCount++;
-                }
-            }
-            for(int z = r.y; z < r.y + r.height; z++) {
-                if (z >= 0 && z < mapDepth) {
-                    if (r.x >= 0 && r.x < mapWidth && grid[r.x, z] == CellType.Door) rd.entranceCount++;
-                    if (r.x + r.width - 1 >= 0 && r.x + r.width - 1 < mapWidth && grid[r.x + r.width - 1, z] == CellType.Door) rd.entranceCount++;
-                }
-            }
+            rd.entranceCount = GetEntranceCount(leafNodes[i]);
             
             if (leafNodes[i] == endRoom)
             {
@@ -676,12 +763,8 @@ public class ProceduralLevelGenerator : MonoBehaviour
                 rd.isAlwaysRendered = true;
             }
 
-            // Convertir a cuarto seguro de manera obligatoria si tiene 1 puerta (Dead End) y era Normal
-            if (rd.entranceCount == 1 && leafNodes[i].archetype == RoomArchetype.Normal)
-            {
-                leafNodes[i].archetype = RoomArchetype.SafeRoom;
-                rd.archetype = RoomArchetype.SafeRoom;
-            }
+            // NOTA: Eliminamos la lógica de convertir automáticamente todos los caminos muertos en cuartos seguros.
+            // Ahora, los dead ends normales seguirán siendo terroríficos.
 
             float customLightDensity = lightDensity;
             if (leafNodes[i].archetype == RoomArchetype.SuperIlluminated || leafNodes[i].archetype == RoomArchetype.SafeRoom) customLightDensity = 1.0f;
@@ -700,30 +783,61 @@ public class ProceduralLevelGenerator : MonoBehaviour
                 
                 Light pointLight = roomLightObj.AddComponent<Light>();
                 pointLight.type = LightType.Point;
-                pointLight.range = s.width * cellSize * 0.8f; 
-                pointLight.intensity = rd.illuminationLevel * 8f;
                 
+                // Asegurar que la luz alcance el suelo incluso en techos altos
+                float widthRange = s.width * cellSize * 0.8f;
+                float heightRange = leafNodes[i].roomHeight * 1.5f;
+                pointLight.range = Mathf.Max(widthRange, heightRange); 
+                
+                pointLight.intensity = rd.illuminationLevel * 8f;
+
+                // Compensar la atenuación si el techo es muy alto
+                if (leafNodes[i].roomHeight > 5f)
+                {
+                    pointLight.intensity *= 1.5f;
+                }
+                
+                // --- NUEVA LUZ EN CONO (SPOTLIGHT) ---
+                GameObject spotLightObj = new GameObject("SpotLight");
+                spotLightObj.transform.SetParent(roomLightObj.transform);
+                spotLightObj.transform.localPosition = Vector3.zero;
+                spotLightObj.transform.localRotation = Quaternion.Euler(90, 0, 0); // Apuntando directo al suelo
+                
+                Light spotLight = spotLightObj.AddComponent<Light>();
+                spotLight.type = LightType.Spot;
+                spotLight.spotAngle = 75f; // Cono amplio para iluminar bien el suelo
+                spotLight.range = heightRange * 1.5f; // Mucha más distancia de caída para techos altos
+                spotLight.intensity = pointLight.intensity * 2.5f; // Los SpotLights necesitan más intensidad
+
                 if (leafNodes[i].archetype == RoomArchetype.SuperIlluminated) 
                 {
-                    pointLight.intensity *= (1f + leafNodes[i].archetypeIntensity * 2f); // Más intensa según el pico
+                    float boost = (1f + leafNodes[i].archetypeIntensity * 2f);
+                    pointLight.intensity *= boost; 
+                    spotLight.intensity *= boost;
                 }
                 
                 if (leafNodes[i].archetype == RoomArchetype.SafeRoom)
                 {
                     // Color aleatorio, vivaz y tranquilizante (Tonos Fríos/Naturales: Verde a Azul a Morado)
-                    pointLight.color = Color.HSVToRGB(Random.Range(0.3f, 0.85f), 0.8f, 1f);
-                    pointLight.intensity = 5f; // Fuerte visualmente
+                    Color safeColor = Color.HSVToRGB(Random.Range(0.3f, 0.85f), 0.8f, 1f);
+                    pointLight.color = safeColor;
+                    spotLight.color = safeColor;
+                    pointLight.intensity = 5f; 
+                    spotLight.intensity = 12f;
                 }
                 // Si la iluminación es muy baja, la luz es defectuosa y parpadea (excepto cuarto seguro)
                 else if (rd.illuminationLevel < 0.4f)
                 {
                     FlickeringLight fl = roomLightObj.AddComponent<FlickeringLight>();
                     fl.isDefective = true;
-                    pointLight.color = new Color(0.9f, 0.9f, 0.8f);
+                    Color defectColor = new Color(0.9f, 0.9f, 0.8f);
+                    pointLight.color = defectColor;
+                    spotLight.color = defectColor;
                 }
                 else
                 {
                     pointLight.color = Color.white;
+                    spotLight.color = Color.white;
                 }
             }
             else
@@ -756,49 +870,130 @@ public class ProceduralLevelGenerator : MonoBehaviour
 
         MarkRoomSpecial(startRoom, "START ZONE", startRoomColor);
         MarkRoomSpecial(endRoom, "SAFE ZONE", safeZoneColor);
+        
+        SpawnScatteredObjects();
+        SpawnKeynotes();
+    }
 
-        // Instanciar props en el resto de habitaciones
-        foreach (BSPNode node in leafNodes)
+    void SpawnScatteredObjects()
+    {
+        if (objectPrefabs == null || objectPrefabs.Length == 0) return;
+
+        // Filtrar habitaciones válidas (que no sean vacías)
+        System.Collections.Generic.List<BSPNode> validRooms = new System.Collections.Generic.List<BSPNode>();
+        foreach (var node in leafNodes)
         {
-            if (node == startRoom || node == endRoom) continue;
+            if (node.archetype != RoomArchetype.Empty && node.room.width > 2 && node.room.height > 2)
+            {
+                validRooms.Add(node);
+            }
+        }
+
+        if (validRooms.Count == 0) return;
+
+        int totalToSpawn = Random.Range(minTotalObjects, maxTotalObjects + 1);
+
+        for (int i = 0; i < totalToSpawn; i++)
+        {
+            BSPNode randomNode = validRooms[Random.Range(0, validRooms.Count)];
+            RectInt r = randomNode.room;
+
+            // Elegir celda aleatoria dentro de la habitación
+            int rx = r.x + Random.Range(1, r.width - 1);
+            int rz = r.y + Random.Range(1, r.height - 1);
+
+            // Evitar generar objetos pegados a las puertas (conexiones)
+            bool isNearDoor = false;
+            if (rx == r.x + 1 && r.x >= 0 && grid[r.x, rz] == CellType.Floor) isNearDoor = true;
+            if (rx == r.x + r.width - 2 && r.x + r.width - 1 < mapWidth && grid[r.x + r.width - 1, rz] == CellType.Floor) isNearDoor = true;
+            if (rz == r.y + 1 && r.y >= 0 && grid[rx, r.y] == CellType.Floor) isNearDoor = true;
+            if (rz == r.y + r.height - 2 && r.y + r.height - 1 < mapDepth && grid[rx, r.y + r.height - 1] == CellType.Floor) isNearDoor = true;
+
+            if (isNearDoor) continue; // Si bloquea la entrada, abortamos este spawn
+
+            // Le damos una pequeña variación para que no estén perfectamente alineados a la grilla
+            float spawnX = (rx + Random.Range(-0.3f, 0.3f)) * cellSize;
+            float spawnZ = (rz + Random.Range(-0.3f, 0.3f)) * cellSize;
+            
+            // Usamos y=0 para que queden pegados al suelo
+            Vector3 spawnPos = new Vector3(spawnX, 0f, spawnZ);
+
+            // Elegir un prefab aleatorio
+            GameObject selectedPrefab = objectPrefabs[Random.Range(0, objectPrefabs.Length)];
+
+            if (selectedPrefab != null)
+            {
+                // Emparentar al geometryContainer para que funcione con el Culling Procedural
+                Transform parentTransform = randomNode.geometryContainer != null ? randomNode.geometryContainer.transform : levelParent.transform;
+                
+                GameObject inst = Instantiate(selectedPrefab, spawnPos, Quaternion.Euler(0, Random.Range(0f, 360f), 0));
+                inst.transform.SetParent(parentTransform);
+            }
+        }
+    }
+
+    void SpawnKeynotes()
+    {
+        if (keynotePrefab == null) return;
+        
+        int numKeynotes = numberOfKeynotes;
+        int spawned = 0;
+        
+        // Barajar cuartos
+        List<BSPNode> shuffledNodes = new List<BSPNode>(leafNodes);
+        for(int i = 0; i < shuffledNodes.Count; i++) {
+            BSPNode temp = shuffledNodes[i]; int rIdx = Random.Range(i, shuffledNodes.Count);
+            shuffledNodes[i] = shuffledNodes[rIdx]; shuffledNodes[rIdx] = temp;
+        }
+
+        foreach(var node in shuffledNodes)
+        {
+            if (spawned >= numKeynotes) break;
+            if (node == startRoom || node == endRoom) continue; // No misiones en zonas seguras
 
             RectInt r = node.room;
-            Transform chunkParent = node.geometryContainer != null ? node.geometryContainer.transform : levelParent.transform;
+            List<KeyValuePair<Vector2Int, Vector3>> possibleWalls = new List<KeyValuePair<Vector2Int, Vector3>>();
+            
+            // Buscar celdas de piso adyacentes a paredes sólidas
+            int startX = Mathf.Max(0, r.x);
+            int endX = Mathf.Min(mapWidth, r.x + r.width);
+            int startZ = Mathf.Max(0, r.y);
+            int endZ = Mathf.Min(mapDepth, r.y + r.height);
 
-            if (node.archetype == RoomArchetype.Empty) continue;
-
-            int propIterations = 1;
-            if (node.archetype == RoomArchetype.Cluttered)
-            {
-                // Multiplicar props según la intensidad
-                propIterations = 1 + Mathf.FloorToInt(node.archetypeIntensity * 4f); 
+            for (int x = startX; x < endX; x++) {
+                for (int z = startZ; z < endZ; z++) {
+                    if (grid[x, z] == CellType.Floor) {
+                        if (x - 1 >= 0 && grid[x - 1, z] == CellType.Wall) 
+                            possibleWalls.Add(new KeyValuePair<Vector2Int, Vector3>(new Vector2Int(x, z), Vector3.right)); // Pared izquierda, mirar a la derecha
+                        else if (x + 1 < mapWidth && grid[x + 1, z] == CellType.Wall) 
+                            possibleWalls.Add(new KeyValuePair<Vector2Int, Vector3>(new Vector2Int(x, z), Vector3.left));
+                        else if (z - 1 >= 0 && grid[x, z - 1] == CellType.Wall) 
+                            possibleWalls.Add(new KeyValuePair<Vector2Int, Vector3>(new Vector2Int(x, z), Vector3.forward));
+                        else if (z + 1 < mapDepth && grid[x, z + 1] == CellType.Wall) 
+                            possibleWalls.Add(new KeyValuePair<Vector2Int, Vector3>(new Vector2Int(x, z), Vector3.back));
+                    }
+                }
             }
 
-            for (int p = 0; p < propIterations; p++)
+            if (possibleWalls.Count > 0)
             {
-                // Instanciar Trampa (50% prob) en posición aleatoria
-                if (Random.value > 0.5f)
-                {
-                    Vector3 centerPos = new Vector3((r.x + Random.Range(1, r.width-1)) * cellSize, 0.5f, (r.y + Random.Range(1, r.height-1)) * cellSize);
-                    if (trapPrefab != null) Instantiate(trapPrefab, centerPos, Quaternion.identity, chunkParent);
-                    else CreatePlaceholder("Trampa", centerPos, Color.red, Vector3.one * 0.5f, chunkParent);
-                }
+                // Elegir una pared aleatoria
+                var chosen = possibleWalls[Random.Range(0, possibleWalls.Count)];
+                Vector2Int cell = chosen.Key;
+                Vector3 normal = chosen.Value; // Hacia adentro del cuarto
 
-                // Instanciar Llave (Item) 
-                if (Random.value > 0.3f)
-                {
-                    Vector3 cornerPos = new Vector3((r.x + Random.Range(1, r.width-1)) * cellSize, 1f, (r.y + Random.Range(1, r.height-1)) * cellSize);
-                    if (keyPrefab != null) Instantiate(keyPrefab, cornerPos, Quaternion.identity, chunkParent);
-                    else CreatePlaceholder("Item/Key", cornerPos, Color.yellow, Vector3.one * 0.3f, chunkParent);
-                }
+                // El centro de la celda de piso
+                Vector3 cellCenter = new Vector3(cell.x * cellSize, 1.5f, cell.y * cellSize);
+                
+                // Mover hacia la pared (en dirección opuesta a la normal). 
+                // Le restamos casi la mitad de cellSize para que quede pegado a la pared
+                Vector3 spawnPos = cellCenter - normal * (cellSize * 0.48f);
+                Quaternion rot = Quaternion.LookRotation(normal);
 
-                // Instanciar Pad cerca de una puerta (o random)
-                if (Random.value > 0.5f)
-                {
-                    Vector3 padPos = new Vector3((r.x + Random.Range(1, r.width-1)) * cellSize, 0.1f, (r.y + Random.Range(1, r.height-1)) * cellSize);
-                    if (padPrefab != null) Instantiate(padPrefab, padPos, Quaternion.identity, chunkParent);
-                    else CreatePlaceholder("Entry Pad", padPos, Color.cyan, new Vector3(1f, 0.1f, 1f), chunkParent);
-                }
+                GameObject keynote = Instantiate(keynotePrefab, spawnPos, rot);
+                keynote.transform.SetParent(node.geometryContainer != null ? node.geometryContainer.transform : levelParent.transform);
+                
+                spawned++;
             }
         }
     }

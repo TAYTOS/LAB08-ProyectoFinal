@@ -1,7 +1,10 @@
 using UnityEngine;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.Universal;
+using UnityEngine.UI;
+using UnityEngine.SceneManagement;
 
 public class AnxietyManager : MonoBehaviour
 {
@@ -15,8 +18,10 @@ public class AnxietyManager : MonoBehaviour
     public List<PhobiaType> activePhobias = new List<PhobiaType>();
     
     [Header("Configuración de Consecuencias")]
-    [Tooltip("Umbral (0-100) en el cual el jugador sufre un evento de pánico.")]
+    [Tooltip("Umbral (0-100) en el cual el jugador sufre un evento de pánico (Alteración de entorno).")]
     public float criticalThreshold = 80f;
+    [Tooltip("Umbral (0-100) en el cual se materializa una entidad física.")]
+    public float entitySpawnThreshold = 95f;
     [Tooltip("Prefab de la entidad que spawnea (Ej. El Gato Tétrico)")]
     public GameObject entityPrefabToSpawn;
     
@@ -25,11 +30,20 @@ public class AnxietyManager : MonoBehaviour
     [Range(1, 4)]
     public int visibilityDepth = 1;
 
+    [Header("Muerte por Ansiedad")]
+    [Tooltip("Segundos consecutivos en 100% de ansiedad antes de morir")]
+    public float timeToDie = 15f;
+    private float deathTimer = 0f;
+    public bool isDead = false;
+
     private RoomData currentRoom;
     private bool hasTriggeredConsequence = false;
+    private bool hasTriggeredEntity = false;
     private HashSet<RoomData> currentlyVisibleRooms = new HashSet<RoomData>();
     private RoomData[] cachedRooms = null;
     private float updateTimer = 0f;
+    private float logTimer = 0f;
+    private float visibilityTimer = 0f;
 
     // Variables para el filtro visual
     private Volume anxietyVolume;
@@ -107,7 +121,6 @@ public class AnxietyManager : MonoBehaviour
         }
     }
 
-    private float logTimer = 0f;
 
     void Update()
     {
@@ -126,6 +139,22 @@ public class AnxietyManager : MonoBehaviour
         }
 
         float previousAnxiety = currentAnxiety;
+
+        if (!isDead)
+        {
+            if (currentAnxiety >= maxAnxiety)
+            {
+                deathTimer += Time.deltaTime;
+                if (deathTimer >= timeToDie)
+                {
+                    StartCoroutine(DeathRoutine());
+                }
+            }
+            else
+            {
+                deathTimer = 0f;
+            }
+        }
 
         // Se ejecuta cada frame, es ligero
         CalculateEnvironmentalAnxiety();
@@ -155,6 +184,14 @@ public class AnxietyManager : MonoBehaviour
         {
             Debug.Log($"[Ansiedad] Nivel Actual: {currentAnxiety:F1} / 100 | Ganancia: {smoothedAnxietyRate:F1} por seg");
             logTimer = 0f;
+        }
+
+        // Actualizar el Culling de Frustum/Distancia periódicamente
+        visibilityTimer += Time.deltaTime;
+        if (visibilityTimer >= 0.3f)
+        {
+            if (currentRoom != null) UpdateRoomVisibility();
+            visibilityTimer = 0f;
         }
     }
 
@@ -244,7 +281,9 @@ public class AnxietyManager : MonoBehaviour
             RoomData node = pair.Key;
             int depth = pair.Value;
 
-            if (depth < visibilityDepth)
+            // Continuar explorando si no hemos alcanzado la profundidad máxima,
+            // O si la habitación está físicamente muy cerca (para evitar voids en pasillos rectos)
+            if (depth < visibilityDepth || Vector3.Distance(transform.position, node.transform.position) < 50f)
             {
                 foreach(var adj in node.adjacentRooms)
                 {
@@ -373,48 +412,50 @@ public class AnxietyManager : MonoBehaviour
             // Si la ansiedad baja significativamente, el jugador puede volver a sufrir otro evento más adelante
             hasTriggeredConsequence = false;
         }
+
+        if (currentAnxiety >= entitySpawnThreshold && !hasTriggeredEntity)
+        {
+            hasTriggeredEntity = true;
+            SpawnChasingEntity();
+        }
+        else if (currentAnxiety < entitySpawnThreshold - 20f)
+        {
+            hasTriggeredEntity = false;
+        }
     }
 
     void TriggerPanicEvent()
     {
         Debug.Log("¡ANSIEDAD CRÍTICA! Iniciando evento de pánico por fobias...");
         
-        // Decidimos aleatoriamente si spawnear enemigo o alterar geometría anterior
-        bool spawnEntity = Random.value > 0.5f;
+        // Geometría no euclidiana / Alucinación
+        // Cambiamos aleatoriamente un cuarto que el jugador ya visitó (no en el que está)
+        if (cachedRooms == null || cachedRooms.Length == 0) cachedRooms = FindObjectsOfType<RoomData>();
+        
+        List<RoomData> visitedRooms = new List<RoomData>();
+        foreach (var r in cachedRooms) {
+            if (r.isVisited && r != currentRoom) visitedRooms.Add(r);
+        }
 
-        if (spawnEntity && entityPrefabToSpawn != null)
+        if (visitedRooms.Count > 0)
+        {
+            RoomData roomToCorrupt = visitedRooms[Random.Range(0, visitedRooms.Count)];
+            CorruptRoom(roomToCorrupt);
+        }
+    }
+
+    void SpawnChasingEntity()
+    {
+        if (entityPrefabToSpawn != null)
         {
             // Spawnear entidad en un punto "ciego" (detrás del jugador)
             Vector3 spawnPos = transform.position - transform.forward * 8f;
             
-            // Para asegurar que no aparezca atravesando paredes, idealmente se usaría un NavMesh, 
-            // pero como es procedural simple, lo ajustamos al Y de la sala
+            // Ajustamos al Y de la sala
             spawnPos.y = currentRoom != null ? currentRoom.transform.position.y : transform.position.y; 
             
             Instantiate(entityPrefabToSpawn, spawnPos, Quaternion.identity);
-            Debug.Log("¡Una entidad ha aparecido a tus espaldas debido al pánico!");
-        }
-        else
-        {
-            // Alternativa: Geometría no euclidiana / Alucinación
-            // Cambiamos aleatoriamente un cuarto que el jugador ya visitó (no en el que está)
-            if (cachedRooms == null || cachedRooms.Length == 0) cachedRooms = FindObjectsOfType<RoomData>();
-            
-            List<RoomData> visitedRooms = new List<RoomData>();
-            foreach (var r in cachedRooms) {
-                if (r.isVisited && r != currentRoom) visitedRooms.Add(r);
-            }
-
-            if (visitedRooms.Count > 0)
-            {
-                RoomData roomToCorrupt = visitedRooms[Random.Range(0, visitedRooms.Count)];
-                CorruptRoom(roomToCorrupt);
-            }
-            else if (entityPrefabToSpawn != null)
-            {
-                // Fallback si no hay cuartos visitados
-                Instantiate(entityPrefabToSpawn, transform.position - transform.forward * 5f, Quaternion.identity);
-            }
+            Debug.Log("¡Una entidad ha aparecido a tus espaldas debido al terror extremo!");
         }
     }
 
@@ -477,6 +518,114 @@ public class AnxietyManager : MonoBehaviour
             
             // Cambiamos el estado interno
             room.illuminationLevel = 0f; 
+        }
+    }
+
+    // --- SECUENCIA DE MUERTE ---
+    IEnumerator DeathRoutine()
+    {
+        isDead = true;
+
+        // 1. Desactivar movimiento y vista
+        SimplePlayerController playerController = GetComponent<SimplePlayerController>();
+        if (playerController != null) playerController.enabled = false;
+
+        // Ocultar HUD de Ansiedad si existe
+        AnxietyUI ui = FindObjectOfType<AnxietyUI>();
+        if (ui != null) ui.gameObject.SetActive(false);
+
+        // 2. Caer al suelo (rotar 90 grados en Z)
+        float fallTime = 1f;
+        float elapsed = 0f;
+        Quaternion startRot = transform.rotation;
+        Quaternion endRot = startRot * Quaternion.Euler(0, 0, 90);
+
+        // Despegar la cámara del jugador para moverla a 3ra persona
+        Camera mainCam = Camera.main;
+        if (mainCam != null)
+        {
+            mainCam.transform.SetParent(null);
+        }
+
+        while (elapsed < fallTime)
+        {
+            elapsed += Time.deltaTime;
+            transform.rotation = Quaternion.Lerp(startRot, endRot, elapsed / fallTime);
+            yield return null;
+        }
+
+        // 3. Crear el UI del Flash Blanco y Texto de Muerte
+        GameObject canvasObj = new GameObject("DeathCanvas");
+        Canvas canvas = canvasObj.AddComponent<Canvas>();
+        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+        canvas.sortingOrder = 999; // Por encima de todo
+
+        GameObject flashObj = new GameObject("WhiteFlash");
+        flashObj.transform.SetParent(canvasObj.transform, false);
+        Image flashImage = flashObj.AddComponent<Image>();
+        flashImage.color = new Color(1, 1, 1, 0); // Empieza transparente
+        RectTransform flashRT = flashImage.GetComponent<RectTransform>();
+        flashRT.anchorMin = Vector2.zero;
+        flashRT.anchorMax = Vector2.one;
+        flashRT.offsetMin = Vector2.zero;
+        flashRT.offsetMax = Vector2.zero;
+
+        // Texto de muerte
+        GameObject textObj = new GameObject("DeathText");
+        textObj.transform.SetParent(canvasObj.transform, false);
+        Text text = textObj.AddComponent<Text>();
+        text.text = "SUCUMBISTE A LA LOCURA\n\nPresiona 'R' para reiniciar";
+        text.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
+        text.fontSize = 40;
+        text.alignment = TextAnchor.MiddleCenter;
+        text.color = new Color(0, 0, 0, 0); // Empieza transparente (negro)
+        RectTransform textRT = text.GetComponent<RectTransform>();
+        textRT.anchorMin = Vector2.zero;
+        textRT.anchorMax = Vector2.one;
+        textRT.offsetMin = Vector2.zero;
+        textRT.offsetMax = Vector2.zero;
+
+        // 4. Mover la cámara a 3ra persona y flashear blanco
+        if (mainCam != null)
+        {
+            Vector3 targetCamPos = transform.position + Vector3.up * 4f - transform.forward * 4f;
+            float camMoveTime = 2f;
+            float camElapsed = 0f;
+            Vector3 startCamPos = mainCam.transform.position;
+
+            while (camElapsed < camMoveTime)
+            {
+                camElapsed += Time.deltaTime;
+                float t = camElapsed / camMoveTime;
+                mainCam.transform.position = Vector3.Lerp(startCamPos, targetCamPos, t);
+                mainCam.transform.LookAt(transform.position);
+
+                // Incrementar flash blanco rápidamente
+                flashImage.color = new Color(1, 1, 1, Mathf.Lerp(0, 1, t * 2f)); // Sube rápido
+                yield return null;
+            }
+            
+            // Aparecer texto
+            text.color = new Color(0, 0, 0, 1);
+        }
+
+        // 5. Orbitar la cámara alrededor del jugador
+        while (true)
+        {
+            if (mainCam != null)
+            {
+                mainCam.transform.RotateAround(transform.position, Vector3.up, 20f * Time.deltaTime);
+                mainCam.transform.LookAt(transform.position);
+            }
+
+            // Reiniciar con R
+            if (Input.GetKeyDown(KeyCode.R))
+            {
+                Time.timeScale = 1f; // Restaurar por si acaso
+                SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
+            }
+
+            yield return null;
         }
     }
 }
