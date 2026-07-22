@@ -1994,6 +1994,7 @@ MonoBehaviour:
   textoEstadoMental: {fileID: 985254756}
   textoFobias: {fileID: 1362077112}
   textoMision: {fileID: 1124159398}
+  textoConteoKeynotes: {fileID: 0}
   vinetaRojaPantalla: {fileID: 1358798675}
   iconoCorazon: {fileID: 0}
   gradienteColorAnsiedad:
@@ -2795,15 +2796,15 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d958394bfdb7fc44680150a18e817fc9, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ProceduralLevelGenerator
-  mapWidth: 120
-  mapDepth: 120
+  mapWidth: 20
+  mapDepth: 20
   minRoomSize: 4
   cellSize: 2
   minWallHeight: 4
   maxWallHeight: 120
   archetypeSettings:
   - archetype: 4
-    baseProbability: 0.497
+    baseProbability: 0
     similarityPeak: 0.139
     distributionCurve:
       serializedVersion: 2
@@ -2830,7 +2831,7 @@ MonoBehaviour:
       m_PostInfinity: 2
       m_RotationOrder: 4
   - archetype: 2
-    baseProbability: 0.079
+    baseProbability: 0
     similarityPeak: 1
     distributionCurve:
       serializedVersion: 2
@@ -2857,7 +2858,7 @@ MonoBehaviour:
       m_PostInfinity: 2
       m_RotationOrder: 4
   - archetype: 3
-    baseProbability: 0.834
+    baseProbability: 0
     similarityPeak: 1
     distributionCurve:
       serializedVersion: 2
@@ -2884,7 +2885,7 @@ MonoBehaviour:
       m_PostInfinity: 2
       m_RotationOrder: 4
   - archetype: 1
-    baseProbability: 0.397
+    baseProbability: 0
     similarityPeak: 1
     distributionCurve:
       serializedVersion: 2
@@ -2911,7 +2912,7 @@ MonoBehaviour:
       m_PostInfinity: 2
       m_RotationOrder: 4
   - archetype: 6
-    baseProbability: 0.3
+    baseProbability: 0
     similarityPeak: 1
     distributionCurve:
       serializedVersion: 2
@@ -2938,7 +2939,7 @@ MonoBehaviour:
       m_PostInfinity: 2
       m_RotationOrder: 4
   - archetype: 5
-    baseProbability: 0.39
+    baseProbability: 0
     similarityPeak: 1
     distributionCurve:
       serializedVersion: 2
@@ -2996,7 +2997,7 @@ MonoBehaviour:
   wallPrefab: {fileID: 0}
   floorPrefab: {fileID: 0}
   keynotePrefab: {fileID: 1128958180616080711, guid: 03c22cbb43e919143bdf5b171a9a74ae, type: 3}
-  numberOfKeynotes: 5
+  numberOfKeynotes: 1
   objectPrefabs:
   - {fileID: 7362323266672293172, guid: b35dedcba4f488545983eb50a885bd84, type: 3}
   - {fileID: 5233006353902838768, guid: 225b34d067392c9458fab1749df97f58, type: 3}
@@ -3466,6 +3467,8 @@ MonoBehaviour:
   currentMissionText: 
   currentMissionColor: {r: 1, g: 1, b: 1, a: 1}
   isMissionUIActive: 0
+  collectedKeynotes: 0
+  totalKeynotes: 0
 --- !u!4 &2099270868
 Transform:
   m_ObjectHideFlags: 0

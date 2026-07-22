@@ -67,7 +67,7 @@ public class AnxietyManager : MonoBehaviour
             allPhobias.Add(p);
         }
 
-        int numPhobias = Random.Range(2, 5); // 2 a 4 fobias
+        int numPhobias = Random.Range(2, 4); // 2 a 3 fobias
         
         // Mezclar lista (Fisher-Yates)
         for (int i = 0; i < allPhobias.Count; i++)

@@ -18,6 +18,12 @@ public class ArchetypeSettings
 
 public class ProceduralLevelGenerator : MonoBehaviour
 {
+    [Header("Generación con Semilla")]
+    [Tooltip("Activa esto para generar un mapa aleatorio cada vez.")]
+    public bool useRandomSeed = true;
+    [Tooltip("Si la casilla anterior está desactivada, el mapa siempre se generará igual a base de este texto.")]
+    public string levelSeed = "MI_SEMILLA";
+
     [Header("Configuración del Mapa")]
     [Tooltip("Ancho del mapa en celdas")]
     public int mapWidth = 40;
@@ -47,6 +53,12 @@ public class ProceduralLevelGenerator : MonoBehaviour
     [Tooltip("Si están vacíos, se usarán Cubos generados por código.")]
     public GameObject wallPrefab;
     public GameObject floorPrefab;
+
+    [Header("Materiales (Opcional)")]
+    [Tooltip("Si usas los cubos por código, aquí puedes asignarles materiales (texturas, normal maps, etc.)")]
+    public Material wallMaterial;
+    public Material floorMaterial;
+    public Material ceilingMaterial;
 
     [Header("Misiones (Keynotes)")]
     [Tooltip("Prefab del Panel de Misiones para pegar en la pared")]
@@ -104,6 +116,12 @@ public class ProceduralLevelGenerator : MonoBehaviour
 
     void Start()
     {
+        if (useRandomSeed || string.IsNullOrEmpty(levelSeed))
+        {
+            levelSeed = System.DateTime.Now.Ticks.ToString();
+        }
+        Random.InitState(levelSeed.GetHashCode());
+
         ConfigurarDificultadNivel();
         ConfigurarEntornoOscuro();
         GenerateLevel();
@@ -135,8 +153,21 @@ public class ProceduralLevelGenerator : MonoBehaviour
                 // Excepto el cuarto vacío (Normal), a los especiales les damos locura
                 if (archetype.archetype != RoomArchetype.Normal && archetype.archetype != RoomArchetype.Empty)
                 {
-                    archetype.baseProbability = Random.Range(0.1f, 0.7f); // Qué tan frecuente aparece
-                    archetype.similarityPeak = Random.Range(0.3f, 1.0f);  // Qué tan intenso es
+                    if (archetype.archetype == RoomArchetype.Batophobic)
+                    {
+                        archetype.baseProbability = Random.Range(0.01f, 0.05f); // Probabilidad muy baja para cuartos gigantes
+                        archetype.similarityPeak = Random.Range(0.8f, 1.0f);
+                    }
+                    else if (archetype.archetype == RoomArchetype.Cluttered)
+                    {
+                        archetype.baseProbability = Random.Range(0.05f, 0.15f); // Probabilidad baja para los cuartos llenitos
+                        archetype.similarityPeak = Random.Range(0.5f, 0.8f);
+                    }
+                    else
+                    {
+                        archetype.baseProbability = Random.Range(0.1f, 0.7f); // Qué tan frecuente aparece
+                        archetype.similarityPeak = Random.Range(0.3f, 1.0f);  // Qué tan intenso es
+                    }
                 }
             }
         }
@@ -228,7 +259,8 @@ public class ProceduralLevelGenerator : MonoBehaviour
         // 5. Spawn de Trampas, Llaves y zonas especiales (Start/End)
         SpawnElements();
 
-        // 6. Construir NavMesh
+        // 6. Optimización de mallas y construcción de NavMesh
+        // StaticBatchingUtility.Combine(levelParent); // <-- Se comenta para evitar el Objeto Gigantesco
         BuildNavMesh();
     }
 
@@ -371,59 +403,57 @@ public class ProceduralLevelGenerator : MonoBehaviour
             CreateCorridors(node.left);
             CreateCorridors(node.right);
 
-            int minDoorSize = 1;
-            
-            if (node.splitHorizontal)
+            Vector2Int centerA = GetRoomCenter(node.left);
+            Vector2Int centerB = GetRoomCenter(node.right);
+
+            // Elegir aleatoriamente si vamos primero en X y luego en Z, o al revés
+            if (Random.value > 0.5f)
             {
-                // El corte fue horizontal, así que comparten una pared en Z
-                int sharedXMin = node.space.x + 1;
-                int sharedXMax = node.space.x + node.space.width - 2;
-                
-                if (sharedXMax >= sharedXMin) 
-                {
-                    int maxDoorSize = (sharedXMax - sharedXMin) + 1;
-                    // Tamaño aleatorio de la puerta
-                    int doorSize = Random.Range(minDoorSize, maxDoorSize + 1);
-                    
-                    // 30% de probabilidad de que la puerta sea GIGANTE (abarque toda la pared)
-                    // Esto ayuda a crear pasadizos reales que se fusionan con otros cuartos
-                    if (Random.value < 0.3f) doorSize = maxDoorSize;
-                    
-                    // Posición aleatoria a lo largo de la pared compartida
-                    int doorStartX = Random.Range(sharedXMin, sharedXMax - doorSize + 2);
-                    
-                    int wallZ1 = node.space.y + node.splitPoint - 1;
-                    int wallZ2 = node.space.y + node.splitPoint;
-                    
-                    for (int x = doorStartX; x < doorStartX + doorSize; x++)
-                    {
-                        if (grid[x, wallZ1] == CellType.Wall) grid[x, wallZ1] = CellType.Door;
-                        if (grid[x, wallZ2] == CellType.Wall) grid[x, wallZ2] = CellType.Door;
-                    }
-                }
+                CarveCorridor(centerA.x, centerB.x, centerA.y, true); // X primero
+                CarveCorridor(centerA.y, centerB.y, centerB.x, false); // Z despues
             }
             else
             {
-                // El corte fue vertical, comparten pared en X
-                int sharedZMin = node.space.y + 1;
-                int sharedZMax = node.space.y + node.space.height - 2;
-                
-                if (sharedZMax >= sharedZMin)
+                CarveCorridor(centerA.y, centerB.y, centerA.x, false); // Z primero
+                CarveCorridor(centerA.x, centerB.x, centerB.y, true); // X despues
+            }
+        }
+    }
+
+    Vector2Int GetRoomCenter(BSPNode node)
+    {
+        if (node.left == null && node.right == null)
+        {
+            return new Vector2Int(node.room.x + node.room.width / 2, node.room.y + node.room.height / 2);
+        }
+        else
+        {
+            // Tomamos el centro de una de sus hojas
+            return Random.value > 0.5f ? GetRoomCenter(node.left) : GetRoomCenter(node.right);
+        }
+    }
+
+    void CarveCorridor(int start, int end, int constant, bool isX)
+    {
+        int min = Mathf.Min(start, end);
+        int max = Mathf.Max(start, end);
+        
+        // El grosor del pasillo (2 o 3 para que no sean tan estrechos y el NavMesh funcione bien)
+        int corridorWidth = 2;
+
+        for (int i = min; i <= max; i++)
+        {
+            for (int w = 0; w < corridorWidth; w++)
+            {
+                int x = isX ? i : constant + w;
+                int z = isX ? constant + w : i;
+
+                if (x >= 0 && x < mapWidth && z >= 0 && z < mapDepth)
                 {
-                    int maxDoorSize = (sharedZMax - sharedZMin) + 1;
-                    int doorSize = Random.Range(minDoorSize, maxDoorSize + 1);
-                    
-                    if (Random.value < 0.3f) doorSize = maxDoorSize;
-                    
-                    int doorStartZ = Random.Range(sharedZMin, sharedZMax - doorSize + 2);
-                    
-                    int wallX1 = node.space.x + node.splitPoint - 1;
-                    int wallX2 = node.space.x + node.splitPoint;
-                    
-                    for (int z = doorStartZ; z < doorStartZ + doorSize; z++)
+                    // Convertir muros en puertas/pasillos
+                    if (grid[x, z] == CellType.Wall || grid[x, z] == CellType.Empty)
                     {
-                        if (grid[wallX1, z] == CellType.Wall) grid[wallX1, z] = CellType.Door;
-                        if (grid[wallX2, z] == CellType.Wall) grid[wallX2, z] = CellType.Door;
+                        grid[x, z] = CellType.Door;
                     }
                 }
             }
@@ -442,6 +472,25 @@ public class ProceduralLevelGenerator : MonoBehaviour
 
     void BuildPhysicalLevel()
     {
+        // OPTIMIZACIÓN: Crear los materiales UNA SOLA VEZ o usar los asignados en el inspector
+        Material sharedFloorMat = floorMaterial != null ? floorMaterial : new Material(Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard"));
+        if (floorMaterial == null) {
+            sharedFloorMat.color = new Color(0.8f, 0.8f, 0.7f);
+            sharedFloorMat.SetFloat("_Smoothness", 0f);
+        }
+        
+        Material sharedCeilingMat = ceilingMaterial != null ? ceilingMaterial : new Material(Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard"));
+        if (ceilingMaterial == null) {
+            sharedCeilingMat.color = new Color(0.2f, 0.2f, 0.2f);
+            sharedCeilingMat.SetFloat("_Smoothness", 0f);
+        }
+
+        Material sharedWallMat = wallMaterial != null ? wallMaterial : new Material(Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard"));
+        if (wallMaterial == null) {
+            sharedWallMat.color = new Color(0.9f, 0.8f, 0.6f);
+            sharedWallMat.SetFloat("_Smoothness", 0f);
+        }
+
         for (int x = 0; x < mapWidth; x++)
         {
             for (int z = 0; z < mapDepth; z++)
@@ -484,22 +533,14 @@ public class ProceduralLevelGenerator : MonoBehaviour
                         floor.transform.position = pos + Vector3.down * 0.5f;
                         floor.transform.localScale = new Vector3(cellSize, 1f, cellSize);
                         floor.transform.SetParent(parentTransform);
-                        Material floorMat = floor.GetComponent<Renderer>().material;
-                        floorMat.color = new Color(0.8f, 0.8f, 0.7f);
-                        floorMat.SetFloat("_Smoothness", 0f);
-                        floorMat.SetFloat("_Glossiness", 0f);
-                        floorMat.SetFloat("_Metallic", 0f);
+                        floor.GetComponent<Renderer>().sharedMaterial = sharedFloorMat; // Uso de material compartido
                         
                         // Techo
                         GameObject ceiling = GameObject.CreatePrimitive(PrimitiveType.Cube);
                         ceiling.transform.position = pos + Vector3.up * currentHeight;
                         ceiling.transform.localScale = new Vector3(cellSize, 1f, cellSize);
                         ceiling.transform.SetParent(parentTransform);
-                        Material ceilingMat = ceiling.GetComponent<Renderer>().material;
-                        ceilingMat.color = new Color(0.2f, 0.2f, 0.2f);
-                        ceilingMat.SetFloat("_Smoothness", 0f);
-                        ceilingMat.SetFloat("_Glossiness", 0f);
-                        ceilingMat.SetFloat("_Metallic", 0f);
+                        ceiling.GetComponent<Renderer>().sharedMaterial = sharedCeilingMat; // Uso de material compartido
                     }
                 }
                 
@@ -515,34 +556,11 @@ public class ProceduralLevelGenerator : MonoBehaviour
                         wall.transform.position = pos + Vector3.up * (currentHeight / 2f);
                         wall.transform.localScale = new Vector3(cellSize, currentHeight, cellSize);
                         wall.transform.SetParent(parentTransform);
-                        Material wallMat = wall.GetComponent<Renderer>().material;
-                        wallMat.color = new Color(0.9f, 0.8f, 0.6f); 
-                        wallMat.SetFloat("_Smoothness", 0f);
-                        wallMat.SetFloat("_Glossiness", 0f);
-                        wallMat.SetFloat("_Metallic", 0f);
+                        wall.GetComponent<Renderer>().sharedMaterial = sharedWallMat; // Uso de material compartido
                     }
 
-                    // --- Lógica de Keynotes en las paredes ---
-                    if (keynotePrefab != null && Random.value < 0.05f) // 5% de probabilidad por pared
-                    {
-                        bool facesFloor = false;
-                        Vector3 keynoteRotation = Vector3.zero;
-                        
-                        // Revisamos celdas adyacentes para ver hacia dónde "mira" la pared (donde hay piso)
-                        if (z > 0 && grid[x, z - 1] == CellType.Floor) { facesFloor = true; keynoteRotation = new Vector3(0, 180, 0); }
-                        else if (z < mapDepth - 1 && grid[x, z + 1] == CellType.Floor) { facesFloor = true; keynoteRotation = new Vector3(0, 0, 0); }
-                        else if (x > 0 && grid[x - 1, z] == CellType.Floor) { facesFloor = true; keynoteRotation = new Vector3(0, -90, 0); }
-                        else if (x < mapWidth - 1 && grid[x + 1, z] == CellType.Floor) { facesFloor = true; keynoteRotation = new Vector3(0, 90, 0); }
-
-                        if (facesFloor)
-                        {
-                            // Instanciamos el Keynote a la altura de los ojos aprox.
-                            GameObject keynote = Instantiate(keynotePrefab, pos + Vector3.up * 1.5f, Quaternion.Euler(keynoteRotation));
-                            keynote.transform.SetParent(parentTransform);
-                            // Desplazamos un poco en su Forward local para que no sufra z-fighting con la pared
-                            keynote.transform.position += keynote.transform.forward * (cellSize * 0.49f);
-                        }
-                    }
+                    // La lógica de Keynotes en las paredes aleatorias ha sido eliminada para evitar generación excesiva.
+                    // Ahora solo se generan en SpawnKeynotes() al final de la rutina de generación de nivel.
                 }
             }
         }
@@ -925,9 +943,12 @@ public class ProceduralLevelGenerator : MonoBehaviour
             {
                 // Emparentar al geometryContainer para que funcione con el Culling Procedural
                 Transform parentTransform = randomNode.geometryContainer != null ? randomNode.geometryContainer.transform : levelParent.transform;
-                
                 GameObject inst = Instantiate(selectedPrefab, spawnPos, Quaternion.Euler(0, Random.Range(0f, 360f), 0));
                 inst.transform.SetParent(parentTransform);
+
+                // Variación de escala aleatoria (entre 70% y 130% de su tamaño original)
+                float randomScale = Random.Range(0.7f, 1.3f);
+                inst.transform.localScale = inst.transform.localScale * randomScale;
             }
         }
     }
@@ -936,7 +957,7 @@ public class ProceduralLevelGenerator : MonoBehaviour
     {
         if (keynotePrefab == null) return;
         
-        int numKeynotes = numberOfKeynotes;
+        int numKeynotes = numberOfKeynotes * 2; // Se genera el doble de la misión por si acaso
         int spawned = 0;
         
         // Barajar cuartos
