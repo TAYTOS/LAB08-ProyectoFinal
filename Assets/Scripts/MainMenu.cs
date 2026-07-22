@@ -13,7 +13,7 @@ public class MainMenu : MonoBehaviour
     public void LoadDemoScene()
     {
         // Cambiar este nombre si el nombre real de la escena es distinto
-        SceneManager.LoadScene("Cosmic_Retro_Station_Props_1_FREE");
+        SceneManager.LoadScene("GameScene");
     }
 
     // Cierra la aplicación

@@ -75,6 +75,9 @@ public class SimplePlayerController : MonoBehaviour
 
     void Update()
     {
+        // Si el juego está en pausa, no procesar movimiento ni rotación de cámara
+        if (Time.timeScale == 0f) return;
+
         Look();
         Move();
         
