@@ -107,3 +107,7 @@ InitTestScene*.unity*
 /[Aa]ssets/[Ii]nit[Tt]est[Ss]cene*.unity*
 
 gestion/__pycache__/
+
+gestion/
+CUESTIONARIO_LAB03.md
+backlog_PHO.csv
