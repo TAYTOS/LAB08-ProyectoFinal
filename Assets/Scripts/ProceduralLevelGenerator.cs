@@ -16,8 +16,74 @@ public class ArchetypeSettings
     public AnimationCurve distributionCurve = AnimationCurve.Constant(0, 1, 1);
 }
 
+[System.Serializable]
+public class LevelProgressionSettings
+{
+    [Header("Nivel 0 (Tutorial)")]
+    public int level0MapWidth = 20;
+    public int level0MapDepth = 20;
+    public int level0Keynotes = 1;
+    public int level0Enemies = 0; // Sin enemigos en el tutorial por defecto
+
+    [Header("Nivel Base (Nivel 1 en adelante)")]
+    public int baseMapWidth = 30;
+    public int baseMapDepth = 30;
+    public int baseKeynotes = 5;
+    public int baseEnemies = 1;
+
+    [Header("Subida por Nivel (Escalado)")]
+    [Tooltip("Cuánto crece el tamaño del laberinto por cada nivel extra después del 1")]
+    public int mapSizeIncreasePerLevel = 0; // Por defecto 0 para mantener tu lógica original, pero puedes subirlo
+    [Tooltip("Cuántas misiones/keynotes extra se añaden por cada nivel extra después del 1")]
+    public int keynotesIncreasePerLevel = 1;
+    [Tooltip("Cuántos enemigos extra se añaden por cada nivel extra después del 1")]
+    public int enemiesIncreasePerLevel = 1;
+    [Header("Límites del Juego")]
+    [Tooltip("El nivel máximo que se puede jugar. Al pasarlo, se termina el juego.")]
+    public int maxLevel = 3;
+}
+
+[System.Serializable]
+public class PerlinLayersSettings
+{
+    [Header("Escala del Ruido (Zoom)")]
+    [Tooltip("Valores bajos crean biomas enormes. Valores altos crean parches pequeños.")]
+    public float spaceScale = 0.03f;
+    public float illuminationScale = 0.05f;
+    public float clutterScale = 0.04f;
+    
+    [Header("Umbrales de Espacio (Batofobia)")]
+    public float batophobicThreshold = 0.75f;
+    public float claustrophobicThreshold = 0.25f;
+    [Tooltip("Controla cómo se escala la altura. Útil para mantener techos bajos hasta llegar al umbral batofóbico.")]
+    public AnimationCurve heightCurve = AnimationCurve.Linear(0f, 0f, 1f, 1f);
+
+    [Header("Umbrales de Iluminación")]
+    public float darkThreshold = 0.25f;
+    public float superIlluminatedThreshold = 0.8f;
+    [Tooltip("Controla la intensidad de las luces. Eje Y debe ir de 0.2 a 1.0 aprox.")]
+    public AnimationCurve illuminationCurve = AnimationCurve.Linear(0f, 1f, 1f, 0.2f); // Invertida por defecto
+
+    [Header("Umbrales de Aglomeración")]
+    public float emptyThreshold = 0.25f;
+    public float clutteredThreshold = 0.75f;
+    [Tooltip("Controla el peso de aglomeración. Curva plana abajo y pico al final hace que los muebles se concentren solo en zonas críticas.")]
+    public AnimationCurve clutterCurve = AnimationCurve.Linear(0f, 0f, 1f, 1f);
+
+    [Header("Offsets (Generados automáticamente)")]
+    public float spaceOffset;
+    public float illuminationOffset;
+    public float clutterOffset;
+}
+
 public class ProceduralLevelGenerator : MonoBehaviour
 {
+    [Header("Capas de Generación Procedural (Dimensiones)")]
+    public PerlinLayersSettings perlinLayers = new PerlinLayersSettings();
+
+    [Header("Configuración de Progresión de Niveles")]
+    public LevelProgressionSettings progressionSettings = new LevelProgressionSettings();
+
     [Header("Generación con Semilla")]
     [Tooltip("Activa esto para generar un mapa aleatorio cada vez.")]
     public bool useRandomSeed = true;
@@ -66,6 +132,12 @@ public class ProceduralLevelGenerator : MonoBehaviour
     [Tooltip("Cantidad exacta de Keynotes que se generarán en el laberinto.")]
     public int numberOfKeynotes = 5;
 
+    [Header("Enemigos y Entidades (Global)")]
+    [Tooltip("Prefabs de los enemigos o monstruos (ej. La Luz, Anomalías).")]
+    public GameObject[] enemyPrefabs;
+    [Tooltip("Total de enemigos a instanciar en todo el laberinto al iniciar la partida.")]
+    public int totalEnemiesInLevel = 1;
+
     [Header("Objetos de Entorno Aleatorios")]
     [Tooltip("Prefabs de props (sillas, mesas, monitores, etc.)")]
     public GameObject[] objectPrefabs;
@@ -73,6 +145,10 @@ public class ProceduralLevelGenerator : MonoBehaviour
     public int minTotalObjects = 15;
     [Tooltip("Cantidad MÁXIMA TOTAL de objetos que aparecerán en todo el nivel")]
     public int maxTotalObjects = 40;
+    [Tooltip("Escala mínima aleatoria de los objetos generados")]
+    public float minObjectScale = 0.5f;
+    [Tooltip("Escala máxima aleatoria de los objetos generados")]
+    public float maxObjectScale = 4f;
     
     [Header("Marcadores Visuales")]
     public Color startRoomColor = Color.green;
@@ -97,7 +173,15 @@ public class ProceduralLevelGenerator : MonoBehaviour
         public BSPNode left, right;
         public bool splitHorizontal;
         public int splitPoint;
-        public GameObject geometryContainer;
+        public GameObject geometryContainer; // Raíz del chunk (para el culling general)
+        public GameObject staticContainer;   // Paredes, Suelos, Techos (Marcados como Static)
+        public GameObject dynamicContainer;  // Props, Luces, Entidades
+        
+        // --- Capas de Ruido de Perlin ---
+        public float noiseSpace;
+        public float noiseIllumination;
+        public float noiseClutter;
+
         public float roomHeight;
         public RoomArchetype archetype = RoomArchetype.Normal;
         public float archetypeIntensity = 0f;
@@ -134,42 +218,22 @@ public class ProceduralLevelGenerator : MonoBehaviour
         if (currentLevel == 0)
         {
             // Nivel 0 (Tutorial/Introducción)
-            mapWidth = 20;
-            mapDepth = 20;
-            numberOfKeynotes = 1;
+            mapWidth = progressionSettings.level0MapWidth;
+            mapDepth = progressionSettings.level0MapDepth;
+            numberOfKeynotes = progressionSettings.level0Keynotes;
+            totalEnemiesInLevel = progressionSettings.level0Enemies;
         }
         else
         {
             // Nivel 1 en adelante (Niveles reales)
-            mapWidth = 80;
-            mapDepth = 80;
+            int levelScale = (currentLevel - 1);
             
-            // Aumentar un poco las keynotes según el nivel si se desea, por ahora base 5
-            numberOfKeynotes = 5 + (currentLevel - 1); 
-
-            // Jugar con los valores de los arquetipos de forma aleatoria
-            foreach (var archetype in archetypeSettings)
-            {
-                // Excepto el cuarto vacío (Normal), a los especiales les damos locura
-                if (archetype.archetype != RoomArchetype.Normal && archetype.archetype != RoomArchetype.Empty)
-                {
-                    if (archetype.archetype == RoomArchetype.Batophobic)
-                    {
-                        archetype.baseProbability = Random.Range(0.01f, 0.05f); // Probabilidad muy baja para cuartos gigantes
-                        archetype.similarityPeak = Random.Range(0.8f, 1.0f);
-                    }
-                    else if (archetype.archetype == RoomArchetype.Cluttered)
-                    {
-                        archetype.baseProbability = Random.Range(0.05f, 0.15f); // Probabilidad baja para los cuartos llenitos
-                        archetype.similarityPeak = Random.Range(0.5f, 0.8f);
-                    }
-                    else
-                    {
-                        archetype.baseProbability = Random.Range(0.1f, 0.7f); // Qué tan frecuente aparece
-                        archetype.similarityPeak = Random.Range(0.3f, 1.0f);  // Qué tan intenso es
-                    }
-                }
-            }
+            mapWidth = progressionSettings.baseMapWidth + (levelScale * progressionSettings.mapSizeIncreasePerLevel);
+            mapDepth = progressionSettings.baseMapDepth + (levelScale * progressionSettings.mapSizeIncreasePerLevel);
+            
+            // Aumentar las keynotes y enemigos según el nivel
+            numberOfKeynotes = progressionSettings.baseKeynotes + (levelScale * progressionSettings.keynotesIncreasePerLevel); 
+            totalEnemiesInLevel = progressionSettings.baseEnemies + (levelScale * progressionSettings.enemiesIncreasePerLevel);
         }
     }
 
@@ -239,18 +303,34 @@ public class ProceduralLevelGenerator : MonoBehaviour
             grid[mapWidth - 1, z] = CellType.Wall;
         }
         
-        // 4. Asignamos Arquetipos a las habitaciones según la curva de distribución
+        // 4. Asignamos Arquetipos (y calculamos el Ruido de Perlin por cuarto)
         AssignArchetypes();
+
+        // 4.5. FUSIONAR CUARTOS BATOFÓBICOS
+        // Si dos cuartos adyacentes son colosales (Batofóbicos), eliminamos la pared que los separa
+        FuseBatophobicRooms();
         
         // --- NUEVA LÓGICA: Seleccionar cuartos especiales y forzar su geometría cerrada ---
         SelectSpecialRooms();
         
-        // --- NUEVA LÓGICA: Preparar contenedores de Chunking ---
+        // --- NUEVA LÓGICA: Preparar contenedores de Chunking Separados ---
         for (int i = 0; i < leafNodes.Count; i++)
         {
-            GameObject container = new GameObject("GeometryChunk_" + i);
+            GameObject container = new GameObject("Chunk_" + i);
             container.transform.SetParent(levelParent.transform);
+            
+            // Contenedor Estático para Geometría
+            GameObject staticCont = new GameObject("StaticGeometry");
+            staticCont.transform.SetParent(container.transform);
+            staticCont.isStatic = true;
+
+            // Contenedor Dinámico para Props, Luces y Objetos
+            GameObject dynamicCont = new GameObject("DynamicObjects");
+            dynamicCont.transform.SetParent(container.transform);
+
             leafNodes[i].geometryContainer = container;
+            leafNodes[i].staticContainer = staticCont;
+            leafNodes[i].dynamicContainer = dynamicCont;
         }
 
         // 4. Instanciamos los objetos 3D y los metemos en sus Chunks
@@ -260,8 +340,49 @@ public class ProceduralLevelGenerator : MonoBehaviour
         SpawnElements();
 
         // 6. Optimización de mallas y construcción de NavMesh
-        // StaticBatchingUtility.Combine(levelParent); // <-- Se comenta para evitar el Objeto Gigantesco
+        // Aplicamos el Batching Estático SOLO a los contenedores de geometría por chunk
+        for (int i = 0; i < leafNodes.Count; i++)
+        {
+            if (leafNodes[i].staticContainer != null)
+                StaticBatchingUtility.Combine(leafNodes[i].staticContainer);
+        }
         BuildNavMesh();
+        
+        // 7. --- SPAWN GLOBAL DE ENTIDADES AL FINALIZAR EL NIVEL ---
+        SpawnGlobalEnemies();
+    }
+
+    void SpawnGlobalEnemies()
+    {
+        if (enemyPrefabs == null || enemyPrefabs.Length == 0 || leafNodes.Count < 2) return;
+
+        int spawned = 0;
+        int attempts = 0; // Para evitar bucles infinitos
+
+        while (spawned < totalEnemiesInLevel && attempts < 200)
+        {
+            attempts++;
+            BSPNode node = leafNodes[Random.Range(0, leafNodes.Count)];
+            
+            // Evitamos spawnear en la zona de inicio o cuartos seguros
+            if (node == startRoom || node.archetype == RoomArchetype.SafeRoom) continue;
+
+            RectInt s = node.space;
+            // Calcular una posición al azar dentro de ese cuarto
+            Vector3 pos = new Vector3((s.x + Random.Range(1, s.width-1)) * cellSize, 1f, (s.y + Random.Range(1, s.height-1)) * cellSize);
+
+            GameObject prefab = enemyPrefabs[Random.Range(0, enemyPrefabs.Length)];
+            
+            if (EntityManager.Instance != null)
+            {
+                EntityManager.Instance.SpawnEntity(prefab, pos, Quaternion.identity, levelParent.transform);
+            }
+            else
+            {
+                Instantiate(prefab, pos, Quaternion.identity, levelParent.transform);
+            }
+            spawned++;
+        }
     }
 
     void BuildNavMesh()
@@ -332,25 +453,108 @@ public class ProceduralLevelGenerator : MonoBehaviour
 
     void AssignArchetypes()
     {
+        // Generar semillas (offsets) únicas para cada capa de ruido
+        perlinLayers.spaceOffset = Random.Range(0f, 10000f);
+        perlinLayers.illuminationOffset = Random.Range(0f, 10000f);
+        perlinLayers.clutterOffset = Random.Range(0f, 10000f);
+
         foreach (BSPNode node in leafNodes)
         {
-            if (node.archetype != RoomArchetype.Normal) continue;
+            // Coordenadas absolutas del centro del cuarto (usado para muestrear el ruido contínuo)
+            float centerX = (node.room.x + node.room.width / 2f) * cellSize;
+            float centerZ = (node.room.y + node.room.height / 2f) * cellSize;
 
-            float depthProgress = (float)node.room.y / mapDepth;
-            List<ArchetypeSettings> validSettings = archetypeSettings.FindAll(s => s.archetype != RoomArchetype.Batophobic && s.archetype != RoomArchetype.Normal);
-            validSettings.Sort((a, b) => Random.value.CompareTo(0.5f)); // Mezclar
+            // 1. Muestrear las 3 dimensiones (capas) de Ruido de Perlin [0.0 - 1.0]
+            node.noiseSpace = Mathf.PerlinNoise(centerX * perlinLayers.spaceScale + perlinLayers.spaceOffset, centerZ * perlinLayers.spaceScale + perlinLayers.spaceOffset);
+            node.noiseIllumination = Mathf.PerlinNoise(centerX * perlinLayers.illuminationScale + perlinLayers.illuminationOffset, centerZ * perlinLayers.illuminationScale + perlinLayers.illuminationOffset);
+            node.noiseClutter = Mathf.PerlinNoise(centerX * perlinLayers.clutterScale + perlinLayers.clutterOffset, centerZ * perlinLayers.clutterScale + perlinLayers.clutterOffset);
 
-            foreach (var setting in validSettings)
+            // 2. Aplicar la Dimensión de Espacio (Altura del Techo) usando la Curva
+            float heightMultiplier = perlinLayers.heightCurve.Evaluate(node.noiseSpace);
+            node.roomHeight = Mathf.Lerp(minWallHeight, maxWallHeight, heightMultiplier);
+
+            // 3. Asignar el Arquetipo Clásico dominante (por compatibilidad con triggers de ansiedad y el mapa)
+            if (node.archetype == RoomArchetype.Normal)
             {
-                float prob = setting.baseProbability * setting.distributionCurve.Evaluate(depthProgress);
-                if (Random.value < prob)
+                if (node.noiseSpace > perlinLayers.batophobicThreshold)
                 {
-                    node.archetype = setting.archetype;
-                    node.archetypeIntensity = setting.similarityPeak;
-                    break;
+                    node.archetype = RoomArchetype.Batophobic;
+                    node.archetypeIntensity = (node.noiseSpace - perlinLayers.batophobicThreshold) / (1f - perlinLayers.batophobicThreshold);
+                }
+                else if (node.noiseSpace < perlinLayers.claustrophobicThreshold)
+                {
+                    node.archetype = RoomArchetype.Claustrophobic;
+                    node.archetypeIntensity = (perlinLayers.claustrophobicThreshold - node.noiseSpace) / perlinLayers.claustrophobicThreshold;
+                }
+                else if (node.noiseClutter > perlinLayers.clutteredThreshold)
+                {
+                    node.archetype = RoomArchetype.Cluttered;
+                    node.archetypeIntensity = (node.noiseClutter - perlinLayers.clutteredThreshold) / (1f - perlinLayers.clutteredThreshold);
+                }
+                else if (node.noiseClutter < perlinLayers.emptyThreshold)
+                {
+                    node.archetype = RoomArchetype.Empty;
+                    node.archetypeIntensity = 1f;
+                }
+                else if (node.noiseIllumination < perlinLayers.darkThreshold)
+                {
+                    node.archetype = RoomArchetype.Dark;
+                    node.archetypeIntensity = 1f;
+                }
+                else if (node.noiseIllumination > perlinLayers.superIlluminatedThreshold)
+                {
+                    node.archetype = RoomArchetype.SuperIlluminated;
+                    node.archetypeIntensity = 1f;
                 }
             }
         }
+    }
+
+    void FuseBatophobicRooms()
+    {
+        for (int x = 1; x < mapWidth - 1; x++)
+        {
+            for (int z = 1; z < mapDepth - 1; z++)
+            {
+                if (grid[x, z] == CellType.Wall)
+                {
+                    // Comprobar Horizontal (Izquierda a Derecha)
+                    if (grid[x - 1, z] == CellType.Floor && grid[x + 1, z] == CellType.Floor)
+                    {
+                        BSPNode leftNode = GetNodeAt(x - 1, z);
+                        BSPNode rightNode = GetNodeAt(x + 1, z);
+                        if (leftNode != null && rightNode != null && leftNode.archetype == RoomArchetype.Batophobic && rightNode.archetype == RoomArchetype.Batophobic)
+                        {
+                            grid[x, z] = CellType.Floor;
+                            continue; // Ya lo convertimos a suelo, pasamos al siguiente
+                        }
+                    }
+                    // Comprobar Vertical (Arriba a Abajo)
+                    if (grid[x, z - 1] == CellType.Floor && grid[x, z + 1] == CellType.Floor)
+                    {
+                        BSPNode downNode = GetNodeAt(x, z - 1);
+                        BSPNode upNode = GetNodeAt(x, z + 1);
+                        if (downNode != null && upNode != null && downNode.archetype == RoomArchetype.Batophobic && upNode.archetype == RoomArchetype.Batophobic)
+                        {
+                            grid[x, z] = CellType.Floor;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private BSPNode GetNodeAt(int x, int z)
+    {
+        foreach (BSPNode node in leafNodes)
+        {
+            if (x >= node.room.x && x < node.room.x + node.room.width &&
+                z >= node.room.y && z < node.room.y + node.room.height)
+            {
+                return node;
+            }
+        }
+        return null;
     }
 
     void CreateRooms(BSPNode node)
@@ -448,6 +652,10 @@ public class ProceduralLevelGenerator : MonoBehaviour
                 int x = isX ? i : constant + w;
                 int z = isX ? constant + w : i;
 
+                // Evitar que los pasillos rompan las paredes exteriores del mapa
+                x = Mathf.Clamp(x, 1, mapWidth - 2);
+                z = Mathf.Clamp(z, 1, mapDepth - 2);
+
                 if (x >= 0 && x < mapWidth && z >= 0 && z < mapDepth)
                 {
                     // Convertir muros en puertas/pasillos
@@ -501,7 +709,7 @@ public class ProceduralLevelGenerator : MonoBehaviour
                 
                 // Encontrar a qué habitación (Chunk) pertenece esta celda
                 BSPNode node = GetNodeForCell(x, z);
-                Transform parentTransform = node != null ? node.geometryContainer.transform : levelParent.transform;
+                Transform parentTransform = node != null ? node.staticContainer.transform : levelParent.transform;
                 float currentHeight = node != null ? node.roomHeight : minWallHeight;
 
                 bool isWall = (grid[x, z] == CellType.Wall);
@@ -524,7 +732,9 @@ public class ProceduralLevelGenerator : MonoBehaviour
                 {
                     if (floorPrefab != null)
                     {
-                        Instantiate(floorPrefab, pos, Quaternion.identity, parentTransform);
+                        GameObject inst = Instantiate(floorPrefab, pos, Quaternion.identity, parentTransform);
+                        inst.isStatic = true;
+                        inst.layer = 6; // Asignar capa 'Room'
                     }
                     else
                     {
@@ -534,13 +744,18 @@ public class ProceduralLevelGenerator : MonoBehaviour
                         floor.transform.localScale = new Vector3(cellSize, 1f, cellSize);
                         floor.transform.SetParent(parentTransform);
                         floor.GetComponent<Renderer>().sharedMaterial = sharedFloorMat; // Uso de material compartido
+                        floor.isStatic = true;
+                        floor.layer = 6; // Asignar capa 'Room'
                         
-                        // Techo
-                        GameObject ceiling = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                        // Techo (Quad apuntando hacia abajo, invisible desde arriba)
+                        GameObject ceiling = GameObject.CreatePrimitive(PrimitiveType.Quad);
                         ceiling.transform.position = pos + Vector3.up * currentHeight;
-                        ceiling.transform.localScale = new Vector3(cellSize, 1f, cellSize);
+                        ceiling.transform.localScale = new Vector3(cellSize, cellSize, 1f); // Quad se escala en XY local
+                        ceiling.transform.rotation = Quaternion.Euler(-90, 0, 0); // Apuntar hacia abajo (-90 en X hace que Z apunte arriba y la normal -Z apunte abajo)
                         ceiling.transform.SetParent(parentTransform);
                         ceiling.GetComponent<Renderer>().sharedMaterial = sharedCeilingMat; // Uso de material compartido
+                        ceiling.isStatic = true;
+                        ceiling.layer = 6; // Asignar capa 'Room'
                     }
                 }
                 
@@ -548,15 +763,53 @@ public class ProceduralLevelGenerator : MonoBehaviour
                 {
                     if (wallPrefab != null)
                     {
-                        Instantiate(wallPrefab, pos + Vector3.up * (currentHeight/2f), Quaternion.identity, parentTransform);
+                        GameObject inst = Instantiate(wallPrefab, pos + Vector3.up * (currentHeight/2f), Quaternion.identity, parentTransform);
+                        inst.isStatic = true;
+                        inst.layer = 6; // Asignar capa 'Room'
                     }
                     else
                     {
-                        GameObject wall = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                        wall.transform.position = pos + Vector3.up * (currentHeight / 2f);
-                        wall.transform.localScale = new Vector3(cellSize, currentHeight, cellSize);
-                        wall.transform.SetParent(parentTransform);
-                        wall.GetComponent<Renderer>().sharedMaterial = sharedWallMat; // Uso de material compartido
+                        // Cubo invisible para mantener colisiones perfectas y evitar bugs físicos
+                        GameObject wallCollider = new GameObject("WallCollider");
+                        wallCollider.transform.position = pos + Vector3.up * (currentHeight / 2f);
+                        wallCollider.transform.SetParent(parentTransform);
+                        wallCollider.isStatic = true;
+                        wallCollider.layer = 6; // Asignar capa 'Room'
+                        BoxCollider box = wallCollider.AddComponent<BoxCollider>();
+                        box.size = new Vector3(cellSize, currentHeight, cellSize);
+
+                        // Caras visuales (Quads) solo apuntando al interior
+                        Vector3[] dirs = { Vector3.forward, Vector3.back, Vector3.left, Vector3.right };
+                        int[][] offsets = { new int[]{0,1}, new int[]{0,-1}, new int[]{-1,0}, new int[]{1,0} };
+
+                        for (int i = 0; i < 4; i++)
+                        {
+                            int nx = x + offsets[i][0];
+                            int nz = z + offsets[i][1];
+
+                            if (nx >= 0 && nx < mapWidth && nz >= 0 && nz < mapDepth)
+                            {
+                                if (grid[nx, nz] == CellType.Floor || grid[nx, nz] == CellType.Door)
+                                {
+                                    GameObject quad = GameObject.CreatePrimitive(PrimitiveType.Quad);
+                                    Destroy(quad.GetComponent<Collider>()); // Quitamos el MeshCollider, ya tenemos el Box
+                                    
+                                    // Desplazamos el quad hacia el borde de la pared que toca el pasillo
+                                    Vector3 quadPos = pos + Vector3.up * (currentHeight / 2f) + dirs[i] * (cellSize / 2f);
+                                    quad.transform.position = quadPos;
+                                    quad.transform.localScale = new Vector3(cellSize, currentHeight, 1f);
+                                    
+                                    // Corregimos la rotación: El Quad por defecto mira hacia -Z, así que debemos rotarlo 
+                                    // usando la dirección opuesta (-dirs[i]) para que su cara normal apunte hacia el piso.
+                                    quad.transform.rotation = Quaternion.LookRotation(-dirs[i]);
+                                    
+                                    quad.transform.SetParent(wallCollider.transform);
+                                    quad.GetComponent<Renderer>().sharedMaterial = sharedWallMat;
+                                    quad.isStatic = true;
+                                    quad.layer = 6; // Asignar capa 'Room'
+                                }
+                            }
+                        }
                     }
 
                     // La lógica de Keynotes en las paredes aleatorias ha sido eliminada para evitar generación excesiva.
@@ -649,82 +902,7 @@ public class ProceduralLevelGenerator : MonoBehaviour
 
     void ForceSafeRoomGeometry(BSPNode node)
     {
-        List<Vector2Int> connections = new List<Vector2Int>();
-        if (node.space.y > 0) {
-            for (int x = node.space.x; x < node.space.x + node.space.width; x++) {
-                if (grid[x, node.space.y] == CellType.Door) connections.Add(new Vector2Int(x, node.space.y));
-            }
-        }
-        if (node.space.y + node.space.height < mapDepth) {
-            for (int x = node.space.x; x < node.space.x + node.space.width; x++) {
-                if (grid[x, node.space.y + node.space.height - 1] == CellType.Door) connections.Add(new Vector2Int(x, node.space.y + node.space.height - 1));
-            }
-        }
-        if (node.space.x > 0) {
-            for (int z = node.space.y; z < node.space.y + node.space.height; z++) {
-                if (grid[node.space.x, z] == CellType.Door) connections.Add(new Vector2Int(node.space.x, z));
-            }
-        }
-        if (node.space.x + node.space.width < mapWidth) {
-            for (int z = node.space.y; z < node.space.y + node.space.height; z++) {
-                if (grid[node.space.x + node.space.width - 1, z] == CellType.Door) connections.Add(new Vector2Int(node.space.x + node.space.width - 1, z));
-            }
-        }
-
-        if (connections.Count == 0) {
-            for (int x = node.space.x; x < node.space.x + node.space.width; x++) {
-                for (int z = node.space.y; z < node.space.y + node.space.height; z++) {
-                    if (grid[x, z] == CellType.Door) connections.Add(new Vector2Int(x, z));
-                }
-            }
-        }
-
-        for (int x = node.space.x; x < node.space.x + node.space.width; x++) {
-            for (int z = node.space.y; z < node.space.y + node.space.height; z++) {
-                grid[x, z] = CellType.Wall;
-            }
-        }
-
-        int size = Mathf.Min(node.space.width, node.space.height) - 2;
-        if (size < 3) size = 3;
-        int rx = node.space.x + (node.space.width - size) / 2;
-        int rz = node.space.y + (node.space.height - size) / 2;
-        
-        if (rx < 1) rx = 1;
-        if (rz < 1) rz = 1;
-        if (rx + size >= mapWidth) size = mapWidth - rx - 1;
-        if (rz + size >= mapDepth) size = mapDepth - rz - 1;
-        
-        node.room = new RectInt(rx, rz, size, size);
-
-        for (int x = rx; x < rx + size; x++) {
-            for (int z = rz; z < rz + size; z++) {
-                grid[x, z] = CellType.Floor;
-            }
-        }
-
-        if (connections.Count > 0) {
-            Vector2Int chosen = connections[Random.Range(0, connections.Count)];
-            int cx = chosen.x;
-            int cz = chosen.y;
-            
-            cx = Mathf.Clamp(cx, node.space.x, node.space.x + node.space.width - 1);
-            cz = Mathf.Clamp(cz, node.space.y, node.space.y + node.space.height - 1);
-
-            int failsafe = 100;
-            while(failsafe-- > 0) {
-                grid[cx, cz] = CellType.Door;
-                if (cx >= rx && cx < rx + size && cz >= rz && cz < rz + size) break;
-                
-                int targetX = rx + size/2;
-                int targetZ = rz + size/2;
-                if (Mathf.Abs(targetX - cx) > Mathf.Abs(targetZ - cz)) {
-                    cx += (targetX > cx) ? 1 : -1;
-                } else {
-                    cz += (targetZ > cz) ? 1 : -1;
-                }
-            }
-        }
+        // Se eliminó la reescritura de geometría para evitar islas.
     }
 
     void SpawnElements()
@@ -765,14 +943,14 @@ public class ProceduralLevelGenerator : MonoBehaviour
             
             if (leafNodes[i] == endRoom)
             {
-                // Instanciar barreras en las puertas
+                // Instanciar barreras en las puertas con validación de límites
                 for(int x = r.x; x < r.x + r.width; x++) {
-                    if (r.y >= 0 && r.y < mapDepth && grid[x, r.y] == CellType.Door) InstanciarBarrera(x, r.y, rd.geometryContainer != null ? rd.geometryContainer.transform : levelParent.transform);
-                    if (r.y + r.height - 1 >= 0 && r.y + r.height - 1 < mapDepth && grid[x, r.y + r.height - 1] == CellType.Door) InstanciarBarrera(x, r.y + r.height - 1, rd.geometryContainer != null ? rd.geometryContainer.transform : levelParent.transform);
+                    if (x >= 0 && x < mapWidth && r.y >= 0 && r.y < mapDepth && grid[x, r.y] == CellType.Door) InstanciarBarrera(x, r.y, leafNodes[i].dynamicContainer != null ? leafNodes[i].dynamicContainer.transform : levelParent.transform);
+                    if (x >= 0 && x < mapWidth && r.y + r.height - 1 >= 0 && r.y + r.height - 1 < mapDepth && grid[x, r.y + r.height - 1] == CellType.Door) InstanciarBarrera(x, r.y + r.height - 1, leafNodes[i].dynamicContainer != null ? leafNodes[i].dynamicContainer.transform : levelParent.transform);
                 }
                 for(int z = r.y; z < r.y + r.height; z++) {
-                    if (r.x >= 0 && r.x < mapWidth && grid[r.x, z] == CellType.Door) InstanciarBarrera(r.x, z, rd.geometryContainer != null ? rd.geometryContainer.transform : levelParent.transform);
-                    if (r.x + r.width - 1 >= 0 && r.x + r.width - 1 < mapWidth && grid[r.x + r.width - 1, z] == CellType.Door) InstanciarBarrera(r.x + r.width - 1, z, rd.geometryContainer != null ? rd.geometryContainer.transform : levelParent.transform);
+                    if (z >= 0 && z < mapDepth && r.x >= 0 && r.x < mapWidth && grid[r.x, z] == CellType.Door) InstanciarBarrera(r.x, z, leafNodes[i].dynamicContainer != null ? leafNodes[i].dynamicContainer.transform : levelParent.transform);
+                    if (z >= 0 && z < mapDepth && r.x + r.width - 1 >= 0 && r.x + r.width - 1 < mapWidth && grid[r.x + r.width - 1, z] == CellType.Door) InstanciarBarrera(r.x + r.width - 1, z, leafNodes[i].dynamicContainer != null ? leafNodes[i].dynamicContainer.transform : levelParent.transform);
                 }
             }
 
@@ -784,20 +962,25 @@ public class ProceduralLevelGenerator : MonoBehaviour
             // NOTA: Eliminamos la lógica de convertir automáticamente todos los caminos muertos en cuartos seguros.
             // Ahora, los dead ends normales seguirán siendo terroríficos.
 
-            float customLightDensity = lightDensity;
-            if (leafNodes[i].archetype == RoomArchetype.SuperIlluminated || leafNodes[i].archetype == RoomArchetype.SafeRoom) customLightDensity = 1.0f;
-            else if (leafNodes[i].archetype == RoomArchetype.Dark) customLightDensity = 0.0f;
+            // La decisión de si hay luz ahora usa la capa de Perlin (noiseIllumination)
+            // Zonas con ruido alto (> lightDensity) serán oscuras.
+            bool hasLight = (leafNodes[i].noiseIllumination < lightDensity);
 
-            if (Random.value < customLightDensity)
+            if (leafNodes[i].archetype == RoomArchetype.SuperIlluminated || leafNodes[i].archetype == RoomArchetype.SafeRoom) hasLight = true;
+            else if (leafNodes[i].archetype == RoomArchetype.Dark) hasLight = false;
+
+            if (hasLight)
             {
-                rd.illuminationLevel = Random.Range(0.2f, 1.0f);
+                // Intensidad basada en la Curva de Iluminación configurada en el Inspector
+                rd.illuminationLevel = ProceduralLevelGenerator.Instance.perlinLayers.illuminationCurve.Evaluate(leafNodes[i].noiseIllumination);
+                
                 if (leafNodes[i].archetype == RoomArchetype.SuperIlluminated) rd.illuminationLevel = 1.0f;
                 else if (leafNodes[i].archetype == RoomArchetype.SafeRoom) rd.illuminationLevel = 0.2f; // Luz tenue (sistema lo ve tenue)
                 
-                // Instanciar luz física en el cuarto
+                // Instanciar luz física en el cuarto (capa dinámica)
                 GameObject roomLightObj = new GameObject("RoomLight_" + i);
                 roomLightObj.transform.position = spaceCenter + Vector3.up * (leafNodes[i].roomHeight * 0.40f); 
-                roomLightObj.transform.SetParent(rd.geometryContainer != null ? rd.geometryContainer.transform : levelParent.transform);
+                roomLightObj.transform.SetParent(leafNodes[i].dynamicContainer != null ? leafNodes[i].dynamicContainer.transform : levelParent.transform);
                 
                 Light pointLight = roomLightObj.AddComponent<Light>();
                 pointLight.type = LightType.Point;
@@ -899,26 +1082,33 @@ public class ProceduralLevelGenerator : MonoBehaviour
 
         // Filtrar habitaciones válidas (que no sean vacías)
         System.Collections.Generic.List<BSPNode> validRooms = new System.Collections.Generic.List<BSPNode>();
+        float totalClutterWeight = 0f;
         foreach (var node in leafNodes)
         {
             if (node.archetype != RoomArchetype.Empty && node.room.width > 2 && node.room.height > 2)
             {
                 validRooms.Add(node);
+                totalClutterWeight += ProceduralLevelGenerator.Instance.perlinLayers.clutterCurve.Evaluate(node.noiseClutter); // Sumar peso según curva
             }
         }
 
-        if (validRooms.Count == 0) return;
+        if (validRooms.Count == 0 || totalClutterWeight <= 0f) return;
 
         int totalToSpawn = Random.Range(minTotalObjects, maxTotalObjects + 1);
 
-        for (int i = 0; i < totalToSpawn; i++)
+        foreach (BSPNode randomNode in validRooms)
         {
-            BSPNode randomNode = validRooms[Random.Range(0, validRooms.Count)];
-            RectInt r = randomNode.room;
+            // Distribuir la cantidad de objetos proporcionalmente al peso de la curva de Aglomeración
+            float weight = ProceduralLevelGenerator.Instance.perlinLayers.clutterCurve.Evaluate(randomNode.noiseClutter);
+            int spawnCount = Mathf.RoundToInt(totalToSpawn * (weight / totalClutterWeight));
 
-            // Elegir celda aleatoria dentro de la habitación
-            int rx = r.x + Random.Range(1, r.width - 1);
-            int rz = r.y + Random.Range(1, r.height - 1);
+            for (int i = 0; i < spawnCount; i++)
+            {
+                RectInt r = randomNode.room;
+
+                // Elegir celda aleatoria dentro de la habitación
+                int rx = r.x + Random.Range(1, r.width - 1);
+                int rz = r.y + Random.Range(1, r.height - 1);
 
             // Evitar generar objetos pegados a las puertas (conexiones)
             bool isNearDoor = false;
@@ -936,19 +1126,34 @@ public class ProceduralLevelGenerator : MonoBehaviour
             // Usamos y=0 para que queden pegados al suelo
             Vector3 spawnPos = new Vector3(spawnX, 0f, spawnZ);
 
+            // SAFE WARD: Evitar generar objetos en un radio de 3 unidades del Spawn y la Salida
+            if (startRoom != null)
+            {
+                RectInt sr = startRoom.room;
+                Vector3 startCenter = new Vector3((sr.x + (sr.width - 1) / 2f) * cellSize, 0f, (sr.y + (sr.height - 1) / 2f) * cellSize);
+                if (Vector3.Distance(spawnPos, startCenter) <= 3.0f) continue;
+            }
+            if (endRoom != null)
+            {
+                RectInt er = endRoom.room;
+                Vector3 endCenter = new Vector3((er.x + (er.width - 1) / 2f) * cellSize, 0f, (er.y + (er.height - 1) / 2f) * cellSize);
+                if (Vector3.Distance(spawnPos, endCenter) <= 3.0f) continue;
+            }
+
             // Elegir un prefab aleatorio
             GameObject selectedPrefab = objectPrefabs[Random.Range(0, objectPrefabs.Length)];
 
             if (selectedPrefab != null)
             {
-                // Emparentar al geometryContainer para que funcione con el Culling Procedural
-                Transform parentTransform = randomNode.geometryContainer != null ? randomNode.geometryContainer.transform : levelParent.transform;
+                // Emparentar al dynamicContainer
+                Transform parentTransform = randomNode.dynamicContainer != null ? randomNode.dynamicContainer.transform : levelParent.transform;
                 GameObject inst = Instantiate(selectedPrefab, spawnPos, Quaternion.Euler(0, Random.Range(0f, 360f), 0));
                 inst.transform.SetParent(parentTransform);
 
-                // Variación de escala aleatoria (entre 70% y 130% de su tamaño original)
-                float randomScale = Random.Range(0.7f, 1.3f);
+                // Variación de escala aleatoria configurable
+                float randomScale = Random.Range(minObjectScale, maxObjectScale);
                 inst.transform.localScale = inst.transform.localScale * randomScale;
+            }
             }
         }
     }
@@ -1012,7 +1217,7 @@ public class ProceduralLevelGenerator : MonoBehaviour
                 Quaternion rot = Quaternion.LookRotation(normal);
 
                 GameObject keynote = Instantiate(keynotePrefab, spawnPos, rot);
-                keynote.transform.SetParent(node.geometryContainer != null ? node.geometryContainer.transform : levelParent.transform);
+                keynote.transform.SetParent(node.dynamicContainer != null ? node.dynamicContainer.transform : levelParent.transform);
                 
                 spawned++;
             }
@@ -1022,7 +1227,8 @@ public class ProceduralLevelGenerator : MonoBehaviour
     void MarkRoomSpecial(BSPNode node, string label, Color col)
     {
         RectInt r = node.room;
-        Vector3 center = new Vector3((r.x + r.width / 2f) * cellSize, 0.1f, (r.y + r.height / 2f) * cellSize);
+        // El verdadero centro geométrico de los cuartos considera que los índices van de 0 a (size - 1)
+        Vector3 center = new Vector3((r.x + (r.width - 1) / 2f) * cellSize, 0.1f, (r.y + (r.height - 1) / 2f) * cellSize);
         
         GameObject marker = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
         marker.transform.position = center;
@@ -1030,7 +1236,7 @@ public class ProceduralLevelGenerator : MonoBehaviour
         marker.GetComponent<Renderer>().material.color = col;
         marker.name = label;
         
-        Transform chunkParent = node.geometryContainer != null ? node.geometryContainer.transform : levelParent.transform;
+        Transform chunkParent = node.dynamicContainer != null ? node.dynamicContainer.transform : levelParent.transform;
         marker.transform.SetParent(chunkParent);
         
         if (label == "START ZONE")
@@ -1063,6 +1269,7 @@ public class ProceduralLevelGenerator : MonoBehaviour
         barrera.transform.localScale = new Vector3(cellSize, minWallHeight, cellSize);
         barrera.transform.SetParent(parent);
         barrera.GetComponent<Renderer>().material.color = Color.red; // Barrera roja para que se note bloqueada
+        barrera.layer = 7; // Asignar capa 'Wall'
         
         if (ControladorNivel.Instancia != null)
         {
