@@ -13,6 +13,9 @@ public class AnxietyManager : MonoBehaviour
     public float currentAnxiety = 0f;
     public float maxAnxiety = 100f;
     
+    [Tooltip("Tasa a la que se recupera la ansiedad (se reduce) por segundo en estado de relajación.")]
+    public float baseRecoveryRate = 8f;
+    
     [Header("Fobias del Jugador")]
     [Tooltip("Añade aquí las fobias que sufre el jugador para que afecten su nivel de ansiedad.")]
     public List<PhobiaType> activePhobias = new List<PhobiaType>();
@@ -31,6 +34,8 @@ public class AnxietyManager : MonoBehaviour
     public int visibilityDepth = 1;
 
     [Header("Muerte por Ansiedad")]
+    [Tooltip("Sprite (PNG) para renderizar el jugador muerto en el piso")]
+    public Sprite deadPlayerSprite;
     [Tooltip("Segundos consecutivos en 100% de ansiedad antes de morir")]
     public float timeToDie = 15f;
     private float deathTimer = 0f;
@@ -332,8 +337,8 @@ public class AnxietyManager : MonoBehaviour
             return;
         }
 
-        // Por defecto, si el ambiente es normal, el jugador se recupera lentamente
-        float anxietyChange = -2f; 
+        // Por defecto, si el ambiente es normal, el jugador se recupera según su tasa base
+        float anxietyChange = -baseRecoveryRate; 
 
         // Evaluamos fobias basadas en el cuarto
         if (activePhobias.Contains(PhobiaType.Claustrophobia))
@@ -357,18 +362,6 @@ public class AnxietyManager : MonoBehaviour
                 anxietyChange += 6f;
         }
 
-        if (activePhobias.Contains(PhobiaType.Monophobia))
-        {
-            // Miedo a estar perdido: si ninguna de las habitaciones adyacentes ha sido visitada
-            int visitedNeighbors = 0;
-            foreach(var neighbor in currentRoom.adjacentRooms)
-            {
-                if (neighbor != null && neighbor.isVisited) visitedNeighbors++;
-            }
-            if (visitedNeighbors == 0 && currentRoom.adjacentRooms.Count > 0)
-                anxietyChange += 5f;
-        }
-
         // Aplicamos el cambio
         currentAnxiety = Mathf.Clamp(currentAnxiety + anxietyChange * Time.deltaTime, 0f, maxAnxiety);
     }
@@ -378,25 +371,8 @@ public class AnxietyManager : MonoBehaviour
         // En un espacio seguro somos inmunes a la presencia de entidades
         if (currentRoom != null && currentRoom.archetype == RoomArchetype.SafeRoom) return;
 
-        if (activePhobias.Contains(PhobiaType.Automatophobia))
-        {
-            // Buscamos entidades cercanas que desencadenen Automatofobia
-            Collider[] hits = Physics.OverlapSphere(transform.position, 15f);
-            foreach (var hit in hits)
-            {
-                PhobiaTrigger trigger = hit.GetComponent<PhobiaTrigger>();
-                if (trigger != null && activePhobias.Contains(trigger.phobiaTag))
-                {
-                    float distance = Vector3.Distance(transform.position, hit.transform.position);
-                    if (distance <= trigger.effectRadius)
-                    {
-                        // A más cerca, mayor intensidad de miedo
-                        float intensity = 1f - (distance / trigger.effectRadius);
-                        currentAnxiety += trigger.anxietyMultiplier * intensity * Time.deltaTime;
-                    }
-                }
-            }
-        }
+        // Reservado para futuras fobias de proximidad (ej. entidades)
+        
         currentAnxiety = Mathf.Clamp(currentAnxiety, 0f, maxAnxiety);
     }
 
@@ -530,15 +506,26 @@ public class AnxietyManager : MonoBehaviour
         SimplePlayerController playerController = GetComponent<SimplePlayerController>();
         if (playerController != null) playerController.enabled = false;
 
-        // Ocultar HUD de Ansiedad si existe
-        AnxietyUI ui = FindObjectOfType<AnxietyUI>();
-        if (ui != null) ui.gameObject.SetActive(false);
+        // (Se removió la desactivación del HUD de Ansiedad para mantener la viñeta original)
 
-        // 2. Caer al suelo (rotar 90 grados en Z)
-        float fallTime = 1f;
-        float elapsed = 0f;
-        Quaternion startRot = transform.rotation;
-        Quaternion endRot = startRot * Quaternion.Euler(0, 0, 90);
+        // 2. Desaparecer al jugador y generar su cadáver en el piso (usando Sprite 2D)
+        Renderer[] renderers = GetComponentsInChildren<Renderer>();
+        foreach (Renderer r in renderers)
+        {
+            r.enabled = false;
+        }
+
+        GameObject deadBody = new GameObject("Dead_player_visual");
+        deadBody.transform.position = transform.position + Vector3.up * 0.05f; // Pegado al piso
+        deadBody.transform.rotation = Quaternion.Euler(90, transform.eulerAngles.y, 0); // Acostado cara arriba
+        // Ajustamos la escala (los sprites suelen ser más pequeños que un quad de 1x1 dependiendo del PPU)
+        deadBody.transform.localScale = new Vector3(3f, 3f, 3f);
+        
+        if (deadPlayerSprite != null)
+        {
+            SpriteRenderer sr = deadBody.AddComponent<SpriteRenderer>();
+            sr.sprite = deadPlayerSprite;
+        }
 
         // Despegar la cámara del jugador para moverla a 3ra persona
         Camera mainCam = Camera.main;
@@ -547,67 +534,74 @@ public class AnxietyManager : MonoBehaviour
             mainCam.transform.SetParent(null);
         }
 
-        while (elapsed < fallTime)
-        {
-            elapsed += Time.deltaTime;
-            transform.rotation = Quaternion.Lerp(startRot, endRot, elapsed / fallTime);
-            yield return null;
-        }
-
-        // 3. Crear el UI del Flash Blanco y Texto de Muerte
-        GameObject canvasObj = new GameObject("DeathCanvas");
-        Canvas canvas = canvasObj.AddComponent<Canvas>();
-        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-        canvas.sortingOrder = 999; // Por encima de todo
-
-        GameObject flashObj = new GameObject("WhiteFlash");
-        flashObj.transform.SetParent(canvasObj.transform, false);
+        // 3. Crear un Canvas completamente nuevo para el Fade a Negro y Texto de Muerte
+        GameObject fadeCanvasObj = new GameObject("DeathCanvas");
+        Canvas fadeCanvas = fadeCanvasObj.AddComponent<Canvas>();
+        fadeCanvas.renderMode = RenderMode.ScreenSpaceOverlay;
+        fadeCanvas.sortingOrder = 999; // Siempre por encima de la viñeta roja y HUD
+        
+        GameObject flashObj = new GameObject("BlackFade");
+        flashObj.transform.SetParent(fadeCanvasObj.transform, false);
         Image flashImage = flashObj.AddComponent<Image>();
-        flashImage.color = new Color(1, 1, 1, 0); // Empieza transparente
+        flashImage.color = new Color(0f, 0f, 0f, 0f); // Empieza transparente
         RectTransform flashRT = flashImage.GetComponent<RectTransform>();
         flashRT.anchorMin = Vector2.zero;
         flashRT.anchorMax = Vector2.one;
         flashRT.offsetMin = Vector2.zero;
         flashRT.offsetMax = Vector2.zero;
 
-        // Texto de muerte
+        // Crear el texto de muerte dinámicamente
         GameObject textObj = new GameObject("DeathText");
-        textObj.transform.SetParent(canvasObj.transform, false);
-        Text text = textObj.AddComponent<Text>();
-        text.text = "SUCUMBISTE A LA LOCURA\n\nPresiona 'R' para reiniciar";
-        text.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
-        text.fontSize = 40;
-        text.alignment = TextAnchor.MiddleCenter;
-        text.color = new Color(0, 0, 0, 0); // Empieza transparente (negro)
-        RectTransform textRT = text.GetComponent<RectTransform>();
+        textObj.transform.SetParent(fadeCanvasObj.transform, false);
+        TMPro.TextMeshProUGUI deathText = textObj.AddComponent<TMPro.TextMeshProUGUI>();
+        deathText.text = "HAS MUERTO\n\nPresiona 'R' para reiniciar";
+        deathText.alignment = TMPro.TextAlignmentOptions.Center;
+        deathText.color = new Color(1f, 0.2f, 0.2f, 0f); // Rojo, pero empieza transparente
+        deathText.fontSize = 40;
+        RectTransform textRT = deathText.GetComponent<RectTransform>();
         textRT.anchorMin = Vector2.zero;
         textRT.anchorMax = Vector2.one;
         textRT.offsetMin = Vector2.zero;
         textRT.offsetMax = Vector2.zero;
 
-        // 4. Mover la cámara a 3ra persona y flashear blanco
+        // 4. Mover la cámara a 3ra persona y oscurecer la pantalla
+        mainCam = Camera.main;
+        SimplePlayerController playerCtrl = GetComponent<SimplePlayerController>();
+        if (mainCam == null && playerCtrl != null && playerCtrl.playerCamera != null)
+        {
+            mainCam = playerCtrl.playerCamera.GetComponent<Camera>();
+        }
+
         if (mainCam != null)
         {
             Vector3 targetCamPos = transform.position + Vector3.up * 4f - transform.forward * 4f;
-            float camMoveTime = 2f;
+            float camMoveTime = 4.5f; // Transición mucho más lenta (4.5 segundos)
             float camElapsed = 0f;
             Vector3 startCamPos = mainCam.transform.position;
 
             while (camElapsed < camMoveTime)
             {
-                camElapsed += Time.deltaTime;
+                camElapsed += Time.unscaledDeltaTime;
                 float t = camElapsed / camMoveTime;
                 mainCam.transform.position = Vector3.Lerp(startCamPos, targetCamPos, t);
                 mainCam.transform.LookAt(transform.position);
 
-                // Incrementar flash blanco rápidamente
-                flashImage.color = new Color(1, 1, 1, Mathf.Lerp(0, 1, t * 2f)); // Sube rápido
+                // Transición a negro semitransparente (alfa = 0.75f) para que se siga viendo Yamcha al fondo
+                if (flashImage != null) 
+                {
+                    flashImage.color = Color.Lerp(new Color(0f, 0f, 0f, 0f), new Color(0f, 0f, 0f, 0.75f), t);
+                }
+                
+                // Mostrar texto a la misma velocidad suave
+                if (deathText != null)
+                {
+                    deathText.color = new Color(1f, 0.2f, 0.2f, Mathf.Lerp(0f, 1f, t));
+                }
                 yield return null;
             }
-            
-            // Aparecer texto
-            text.color = new Color(0, 0, 0, 1);
         }
+
+        // (El Canvas de derrota ya se creó dinámicamente arriba)
 
         // 5. Orbitar la cámara alrededor del jugador
         while (true)
@@ -619,7 +613,7 @@ public class AnxietyManager : MonoBehaviour
             }
 
             // Reiniciar con R
-            if (Input.GetKeyDown(KeyCode.R))
+            if (UnityEngine.InputSystem.Keyboard.current != null && UnityEngine.InputSystem.Keyboard.current.rKey.wasPressedThisFrame)
             {
                 Time.timeScale = 1f; // Restaurar por si acaso
                 SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);

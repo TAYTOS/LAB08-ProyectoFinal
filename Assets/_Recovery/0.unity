@@ -389,51 +389,6 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 150388482}
   m_CullTransparentMesh: 1
---- !u!1 &271644547
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 271644549}
-  - component: {fileID: 271644548}
-  m_Layer: 0
-  m_Name: EntityManager
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!114 &271644548
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 271644547}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: fd797b76b1a836c498df364c11a94b6e, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::EntityManager
-  activeEntities: []
---- !u!4 &271644549
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 271644547}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 38.23075, y: 0, z: 36.98117}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &279809836
 GameObject:
   m_ObjectHideFlags: 0
@@ -1185,7 +1140,7 @@ Light:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 796585090}
-  m_Enabled: 1
+  m_Enabled: 0
   serializedVersion: 12
   m_Type: 1
   m_Color: {r: 1, g: 0.95686275, b: 0.8392157, a: 1}
@@ -2400,7 +2355,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 4abaabeab9c8adf4b84e38e5b3828c02, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::MinimapUI
-  minimapSize: 100
+  minimapSize: 200
   toggleKey: 27
 --- !u!4 &1377645961
 Transform:
@@ -2841,151 +2796,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d958394bfdb7fc44680150a18e817fc9, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ProceduralLevelGenerator
-  perlinLayers:
-    spaceScale: 0.03
-    illuminationScale: 0.05
-    clutterScale: 0.04
-    batophobicThreshold: 0.25
-    claustrophobicThreshold: 0.8
-    heightCurve:
-      serializedVersion: 2
-      m_Curve:
-      - serializedVersion: 3
-        time: 0.0034370422
-        value: 0
-        inSlope: 0.13767733
-        outSlope: 0.13767733
-        tangentMode: 0
-        weightedMode: 0
-        inWeight: 0
-        outWeight: 0.73140097
-      - serializedVersion: 3
-        time: 0.80213094
-        value: 0.10845463
-        inSlope: 0.45631415
-        outSlope: 0.45631415
-        tangentMode: 0
-        weightedMode: 0
-        inWeight: 0.317876
-        outWeight: 0.65959847
-      - serializedVersion: 3
-        time: 1
-        value: 1
-        inSlope: 0.7638052
-        outSlope: 0.7638052
-        tangentMode: 0
-        weightedMode: 0
-        inWeight: 0.577203
-        outWeight: 0
-      m_PreInfinity: 2
-      m_PostInfinity: 2
-      m_RotationOrder: 4
-    darkThreshold: 0.25
-    superIlluminatedThreshold: 0.75
-    illuminationCurve:
-      serializedVersion: 2
-      m_Curve:
-      - serializedVersion: 3
-        time: 0.013031006
-        value: 1.0056763
-        inSlope: -0.09386594
-        outSlope: -0.09386594
-        tangentMode: 34
-        weightedMode: 0
-        inWeight: 0
-        outWeight: 0.33333334
-      - serializedVersion: 3
-        time: 0.28759062
-        value: 0.9799045
-        inSlope: 0.05825934
-        outSlope: 0.05825934
-        tangentMode: 0
-        weightedMode: 0
-        inWeight: 0.33333334
-        outWeight: 0.4531505
-      - serializedVersion: 3
-        time: 0.8856838
-        value: 0.008344322
-        inSlope: -0.014222692
-        outSlope: -0.014222692
-        tangentMode: 0
-        weightedMode: 0
-        inWeight: 0.33333334
-        outWeight: 1
-      - serializedVersion: 3
-        time: 1.013031
-        value: 0.0032577515
-        inSlope: -0.039942533
-        outSlope: -0.039942533
-        tangentMode: 34
-        weightedMode: 0
-        inWeight: 0.33333334
-        outWeight: 0
-      m_PreInfinity: 2
-      m_PostInfinity: 2
-      m_RotationOrder: 4
-    emptyThreshold: 0.25
-    clutteredThreshold: 0.75
-    clutterCurve:
-      serializedVersion: 2
-      m_Curve:
-      - serializedVersion: 3
-        time: 0
-        value: 0
-        inSlope: 0
-        outSlope: 0
-        tangentMode: 0
-        weightedMode: 0
-        inWeight: 0
-        outWeight: 0
-      - serializedVersion: 3
-        time: 0.24304174
-        value: 0.10026767
-        inSlope: 1.7614789
-        outSlope: 1.7614789
-        tangentMode: 0
-        weightedMode: 0
-        inWeight: 0.33333334
-        outWeight: 0.107180856
-      - serializedVersion: 3
-        time: 0.80556387
-        value: 0.8668274
-        inSlope: 2.011981
-        outSlope: 2.011981
-        tangentMode: 0
-        weightedMode: 0
-        inWeight: 0.33333334
-        outWeight: 0.22853857
-      - serializedVersion: 3
-        time: 1
-        value: 1
-        inSlope: 1
-        outSlope: 1
-        tangentMode: 0
-        weightedMode: 0
-        inWeight: 0
-        outWeight: 0
-      m_PreInfinity: 2
-      m_PostInfinity: 2
-      m_RotationOrder: 4
-    spaceOffset: 0
-    illuminationOffset: 0
-    clutterOffset: 0
-  progressionSettings:
-    level0MapWidth: 20
-    level0MapDepth: 20
-    level0Keynotes: 3
-    level0Enemies: 0
-    baseMapWidth: 40
-    baseMapDepth: 40
-    baseKeynotes: 5
-    baseEnemies: 1
-    mapSizeIncreasePerLevel: 20
-    keynotesIncreasePerLevel: 2
-    enemiesIncreasePerLevel: 1
-    maxLevel: 2
-  useRandomSeed: 1
-  levelSeed: MI_SEMILLA
   mapWidth: 20
   mapDepth: 20
   minRoomSize: 4
@@ -3186,14 +2996,11 @@ MonoBehaviour:
   lightDensity: 0.553
   wallPrefab: {fileID: 0}
   floorPrefab: {fileID: 0}
-  wallMaterial: {fileID: 0}
-  floorMaterial: {fileID: 0}
-  ceilingMaterial: {fileID: 0}
+  wallMaterial: {fileID: 2100000, guid: b26218ebcbf8f3244aa39ecc4b0d6317, type: 2}
+  floorMaterial: {fileID: 2100000, guid: bd15c95bd91784b41bf82749fc48913e, type: 2}
+  ceilingMaterial: {fileID: 2100000, guid: 559b9d10743448343bc543ab82f8dbb1, type: 2}
   keynotePrefab: {fileID: 1128958180616080711, guid: 03c22cbb43e919143bdf5b171a9a74ae, type: 3}
   numberOfKeynotes: 1
-  enemyPrefabs:
-  - {fileID: 3752832170189155273, guid: 9e076526ccbe8924a94bb32eaaf7def5, type: 3}
-  totalEnemiesInLevel: 1
   objectPrefabs:
   - {fileID: 7362323266672293172, guid: b35dedcba4f488545983eb50a885bd84, type: 3}
   - {fileID: 5233006353902838768, guid: 225b34d067392c9458fab1749df97f58, type: 3}
@@ -3202,13 +3009,12 @@ MonoBehaviour:
   - {fileID: 140214157207293623, guid: 58e4a2a42d55ee6449ac12186f5c7feb, type: 3}
   - {fileID: 7427327909811847938, guid: e791fb8601745f34d93368b40559175a, type: 3}
   - {fileID: 7466440845076799791, guid: e3a926bd1678bcc4fbe4c5117b391aaa, type: 3}
+  - {fileID: 1015789505453104577, guid: e185c3e8cd97289418b0d598a84476c2, type: 3}
   minTotalObjects: 80
   maxTotalObjects: 200
-  minObjectScale: 0.5
-  maxObjectScale: 4
   startRoomColor: {r: 0, g: 1, b: 0, a: 1}
   safeZoneColor: {r: 0, g: 0, b: 1, a: 1}
-  showDebugZones: 1
+  showDebugZones: 0
 --- !u!4 &1613704568
 Transform:
   m_ObjectHideFlags: 0
@@ -3254,13 +3060,13 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::AudioManager
   musicaFondoClip: {fileID: 8300000, guid: 6313ff2a893fc3d4cb1abb261cf15df5, type: 3}
-  volumenMusicaFondo: 0.636
+  volumenMusicaFondo: 0.5
   latidosClip: {fileID: 8300000, guid: dda66e3f882871e4384991018e6455da, type: 3}
-  umbralLatidos: 20
-  volumenMaxLatidos: 1
+  umbralLatidos: 30
+  volumenMaxLatidos: 0.8
   pitchMinLatidos: 0.9
   pitchMaxLatidos: 1.6
-  anxietyManager: {fileID: 1874451949}
+  anxietyManager: {fileID: 0}
 --- !u!4 &1760925140
 Transform:
   m_ObjectHideFlags: 0
@@ -3329,7 +3135,6 @@ GameObject:
   - component: {fileID: 1874451947}
   - component: {fileID: 1874451949}
   - component: {fileID: 1874451950}
-  - component: {fileID: 1874451951}
   m_Layer: 0
   m_Name: Player
   m_TagString: Player
@@ -3476,10 +3281,6 @@ MonoBehaviour:
   gravity: -9.81
   mouseSensitivity: 2
   playerCamera: {fileID: 0}
-  isThirdPerson: 1
-  cameraDistance: 3.5
-  cameraHeight: 1.5
-  cameraOffset: {x: 0.5, y: 0, z: 0}
 --- !u!143 &1874451948
 CharacterController:
   m_ObjectHideFlags: 0
@@ -3518,15 +3319,13 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::AnxietyManager
   currentAnxiety: 0
-  maxAnxiety: 750
-  baseRecoveryRate: 7
+  maxAnxiety: 2000
   activePhobias: 
-  criticalThreshold: 400
-  entitySpawnThreshold: 650
+  criticalThreshold: 1000
+  entitySpawnThreshold: 1500
   entityPrefabToSpawn: {fileID: 2706799682320172140, guid: b01a620eebe73ad4eb505ef096d98347, type: 3}
   visibilityDepth: 3
-  deadPlayerSprite: {fileID: 21300000, guid: fae41ddd3bd142840856009ce90abad8, type: 3}
-  timeToDie: 5
+  timeToDie: 15
   isDead: 0
 --- !u!135 &1874451950
 SphereCollider:
@@ -3549,14 +3348,6 @@ SphereCollider:
   serializedVersion: 3
   m_Radius: 2
   m_Center: {x: 0, y: 0, z: 0}
---- !u!81 &1874451951
-AudioListener:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1874451940}
-  m_Enabled: 1
 --- !u!1 &2077482071
 GameObject:
   m_ObjectHideFlags: 0
@@ -3987,4 +3778,3 @@ SceneRoots:
   - {fileID: 1263589170}
   - {fileID: 1377645961}
   - {fileID: 2099270868}
-  - {fileID: 271644549}

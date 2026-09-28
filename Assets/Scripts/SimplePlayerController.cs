@@ -13,6 +13,13 @@ public class SimplePlayerController : MonoBehaviour
     public float mouseSensitivity = 0.1f;
     public Transform playerCamera;
     
+    [Header("Cámara 3ra Persona")]
+    public bool isThirdPerson = false;
+    public float cameraDistance = 3.5f;
+    public float cameraHeight = 1.5f;
+    public Vector3 cameraOffset = new Vector3(0.5f, 0f, 0f); // Offset lateral (ej. sobre el hombro)
+    
+    private Transform cameraPivot;
     private CharacterController controller;
     private float verticalRotation = 0f;
     private Vector3 velocity;
@@ -20,6 +27,8 @@ public class SimplePlayerController : MonoBehaviour
 
     void Awake()
     {
+        isThirdPerson = false; // Forzar a primera persona por defecto
+        
         // 1. Configuración Automática del Controlador
         controller = GetComponent<CharacterController>();
         
@@ -33,10 +42,27 @@ public class SimplePlayerController : MonoBehaviour
             }
             else
             {
-                // Si no tiene cámara hija, le creamos una automáticamente
+                // Creamos un pivote para la cámara para manejar la rotación vertical independientemente
+                GameObject pivotObj = new GameObject("CameraPivot");
+                pivotObj.transform.SetParent(transform);
+                pivotObj.transform.localPosition = isThirdPerson ? new Vector3(0, cameraHeight, 0) : new Vector3(0, 0.6f, 0);
+                cameraPivot = pivotObj.transform;
+
+                // Si no tiene cámara hija, le creamos una automáticamente atada al pivote
                 GameObject camObj = new GameObject("PlayerCamera");
-                camObj.transform.SetParent(transform);
-                camObj.transform.localPosition = new Vector3(0, 0.6f, 0); // Altura de los ojos
+                camObj.transform.SetParent(cameraPivot);
+                
+                if (isThirdPerson)
+                {
+                    // Posicionamos la cámara atrás y con el offset deseado
+                    camObj.transform.localPosition = new Vector3(cameraOffset.x, cameraOffset.y, -cameraDistance);
+                }
+                else
+                {
+                    // Primera persona
+                    camObj.transform.localPosition = Vector3.zero;
+                }
+                
                 Camera cam = camObj.AddComponent<Camera>();
                 cam.tag = "MainCamera";
                 playerCamera = camObj.transform;
@@ -86,6 +112,33 @@ public class SimplePlayerController : MonoBehaviour
         {
             flashlight.enabled = !flashlight.enabled;
         }
+
+        // Alternar perspectiva (1ra / 3ra persona)
+        if (Keyboard.current != null && Keyboard.current.vKey.wasPressedThisFrame)
+        {
+            TogglePerspective();
+        }
+    }
+
+    void TogglePerspective()
+    {
+        isThirdPerson = !isThirdPerson;
+        
+        if (cameraPivot != null && playerCamera != null)
+        {
+            // Ajustar altura del pivote
+            cameraPivot.localPosition = isThirdPerson ? new Vector3(0, cameraHeight, 0) : new Vector3(0, 0.6f, 0);
+            
+            // Ajustar posición de la cámara relativa al pivote
+            if (isThirdPerson)
+            {
+                playerCamera.localPosition = new Vector3(cameraOffset.x, cameraOffset.y, -cameraDistance);
+            }
+            else
+            {
+                playerCamera.localPosition = Vector3.zero;
+            }
+        }
     }
 
     void Look()
@@ -99,10 +152,18 @@ public class SimplePlayerController : MonoBehaviour
         // Rotar al jugador en el eje Y (izquierda/derecha)
         transform.Rotate(Vector3.up * mouseX);
 
-        // Rotar la cámara en el eje X (arriba/abajo) con límite
+        // Rotar la cámara o el pivote en el eje X (arriba/abajo) con límite
         verticalRotation -= mouseY;
         verticalRotation = Mathf.Clamp(verticalRotation, -85f, 85f);
-        playerCamera.localRotation = Quaternion.Euler(verticalRotation, 0f, 0f);
+        
+        if (cameraPivot != null)
+        {
+            cameraPivot.localRotation = Quaternion.Euler(verticalRotation, 0f, 0f);
+        }
+        else
+        {
+            playerCamera.localRotation = Quaternion.Euler(verticalRotation, 0f, 0f);
+        }
     }
 
     void Move()

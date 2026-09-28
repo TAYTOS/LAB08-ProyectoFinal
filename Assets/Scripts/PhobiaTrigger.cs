@@ -4,9 +4,7 @@ public enum PhobiaType
 {
     Claustrophobia,  // Miedo a espacios cerrados/pequeños
     Agoraphobia,     // Miedo a espacios abiertos/grandes o con muchas salidas
-    Nyctophobia,     // Miedo a la oscuridad
-    Automatophobia,  // Miedo a figuras humanoides (ej. estatuas, entidades)
-    Monophobia       // Miedo a estar solo/aislado de áreas conocidas
+    Nyctophobia      // Miedo a la oscuridad
 }
 
 public class PhobiaTrigger : MonoBehaviour

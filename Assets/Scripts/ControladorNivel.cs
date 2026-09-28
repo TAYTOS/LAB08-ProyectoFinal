@@ -48,9 +48,7 @@ public class ControladorNivel : MonoBehaviour
 
         if (tiempoRestante <= 0)
         {
-            ApagarTodosLosTextos();
-            if (textoDerrota != null) textoDerrota.SetActive(true);
-            juegoTerminado = true;
+            PerderJuego();
         }
     }
 
@@ -105,6 +103,14 @@ public class ControladorNivel : MonoBehaviour
         if (juegoTerminado) return;
         ApagarTodosLosTextos();
         if (textoVictoria != null) textoVictoria.SetActive(true);
+        juegoTerminado = true;
+    }
+
+    public void PerderJuego()
+    {
+        if (juegoTerminado) return;
+        ApagarTodosLosTextos();
+        if (textoDerrota != null) textoDerrota.SetActive(true);
         juegoTerminado = true;
     }
 }
