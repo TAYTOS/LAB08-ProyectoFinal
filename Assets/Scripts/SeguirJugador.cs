@@ -14,14 +14,16 @@ public class SeguirJugador : MonoBehaviour
     private Transform jugador;
     private NavMeshAgent agente;
 
+    private EnemyAIController aiController;
+
     void Start()
     {
         agente = GetComponent<NavMeshAgent>();
         agente.stoppingDistance = distanciaFrenado;
         agente.baseOffset = ajusteAltura;
-        
-        // El NavMeshAgent ya controla la rotación, pero ajustamos un poco para suavidad
-        agente.updateRotation = true;
+
+        // Si ya existe el controlador completo FSM, permitirle gobernar
+        aiController = GetComponent<EnemyAIController>();
 
         if (Camera.main != null)
         {
@@ -41,9 +43,12 @@ public class SeguirJugador : MonoBehaviour
 
     void Update()
     {
+        // Si EnemyAIController está presente y activo, delega la lógica de navegación completa a él
+        if (aiController != null && aiController.enabled) return;
+
         if (jugador == null || agente == null) return;
 
-        // Actualizamos el destino del agente hacia el jugador
+        // Fallback: seguimiento directo original
         agente.SetDestination(jugador.position);
     }
 }

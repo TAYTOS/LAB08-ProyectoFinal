@@ -44,10 +44,11 @@ public class SteeringAgent : MonoBehaviour
         
         transform.position += velocity * Time.deltaTime;
 
-        // 5. Orientar el objeto hacia donde se mueve
+        // 5. Orientar el objeto suavemente usando Cuaterniones (LookRotation + Slerp)
         if (velocity.sqrMagnitude > 0.01f)
         {
-            transform.forward = velocity.normalized;
+            Quaternion targetRot = Quaternion.LookRotation(velocity.normalized, Vector3.up);
+            transform.rotation = Quaternion.Slerp(transform.rotation, targetRot, Time.deltaTime * 8f);
         }
     }
 }
