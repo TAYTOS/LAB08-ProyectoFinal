@@ -1,322 +1,391 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.AI;
-using System.Collections;
-using System.Collections.Generic;
 
-public enum EnemyState
-{
-    Patrol,
-    Investigate,
-    Chase,
-    TraverseJumpLink
-}
+public enum EnemyState { Patrol, Investigate, Chase, Evade, Hide, TraverseJumpLink }
 
-[RequireComponent(typeof(NavMeshAgent))]
+[RequireComponent(typeof(NavMeshAgent), typeof(SteeringAgent))]
 public class EnemyAIController : MonoBehaviour
 {
-    [Header("Objetivo")]
     public Transform player;
-
-    [Header("Percepción y Detección (Line of Sight)")]
-    public float detectionRadius = 14f;
-    [Range(0f, 360f)]
-    public float fieldOfViewAngle = 110f;
-    public LayerMask obstacleMask = ~0; // Por defecto todo
-    public float loseTargetTime = 4f;
-
-    [Header("Patrulla y Waypoints")]
-    public float patrolSpeed = 2.5f;
-    public float chaseSpeed = 5.0f;
-    public float waypointStoppingDistance = 1.0f;
-    public float waitTimeAtWaypoint = 2.0f;
+    public float detectionRadius = 18f;
+    [Range(0f, 360f)] public float fieldOfViewAngle = 150f;
+    public LayerMask obstacleMask = ~0;
+    public float loseTargetTime = 3f;
+    public float patrolSpeed = 2.2f;
+    public float chaseSpeed = 4.2f;
+    public float evadeSpeed = 4.7f;
+    public float waypointStoppingDistance = 0.7f;
+    public float waitTimeAtWaypoint = 0.7f;
     public List<Transform> customWaypoints = new List<Transform>();
-    private List<Vector3> patrolPoints = new List<Vector3>();
-    private int currentWaypointIndex = 0;
-    private bool isWaitingAtPoint = false;
-
-    [Header("Orientación Suave (Cuaterniones)")]
-    public float rotationSpeed = 8f;
-
-    [Header("Off-Mesh Links / Saltos")]
-    public float jumpDuration = 0.8f;
-    public float jumpHeight = 1.5f;
-    private bool isTraversingLink = false;
-
-    [Header("Estado Actual (Read Only)")]
     public EnemyState currentState = EnemyState.Patrol;
+    public RoomData HomeRoom { get; private set; }
+    public bool ConfinedToRoom { get; private set; }
+    public bool IsVulnerable => !defeated && PlayerPowerState.Instance != null && PlayerPowerState.Instance.IsEmpowered;
+    public bool UsesFlowField => currentState == EnemyState.Patrol && flowFollowing != null && flowFollowing.enabled;
+    public bool IsReady => steering != null && steering.IsOnNavigation;
 
-    private NavMeshAgent agent;
-    private Vector3 lastKnownPlayerPos;
-    private float timeSinceLastSeen = 0f;
+    private SteeringAgent steering;
+    private PursuitBehavior pursuit;
+    private EvasionBehavior evasion;
+    private WallFollowingBehavior wallFollowing;
+    private FlowFieldFollowingBehavior flowFollowing;
+    private NavMeshFlowField flowField;
+    private PredictiveEvasionBehavior predictiveEvasion;
+    private AnxietyManager anxiety;
+    private bool initialized;
+    private bool defeated;
+    private bool useFlowPatrol;
+    private bool hasPatrolGoal;
+    private bool hasHideGoal;
+    private Vector3 patrolGoal;
+    private Vector3 hideGoal;
+    private Vector3 lastKnownPlayerPosition;
+    private float lastSeenTime = -100f;
+    private float nextDecision;
+    private float waitUntil;
+    private float impactEvadeUntil;
+    private float nextHideSearch;
+    private int waypointIndex;
+    private int patrolLeg;
+    private static int spawnSequence;
 
-    void Awake()
+    void Awake() { EnsureComponents(); }
+    void OnEnable()
     {
-        agent = GetComponent<NavMeshAgent>();
-        // Tomamos el control manual de la rotación para usar Quaternion.Slerp suave
-        agent.updateRotation = false;
-        agent.autoTraverseOffMeshLink = false; // Manejamos saltos proceduralmente
+        defeated = false;
+        initialized = false;
+        nextDecision = waitUntil = impactEvadeUntil = nextHideSearch = 0f;
+        lastSeenTime = -100f;
+        hasPatrolGoal = hasHideGoal = false;
+        waypointIndex = patrolLeg = 0;
+        currentState = EnemyState.Patrol;
+        if (steering != null) steering.ResetMotion();
+    }
+    void OnDisable()
+    {
+        initialized = false;
+        if (steering != null) steering.ResetMotion();
+        if (flowField != null) flowField.Invalidate();
     }
 
-    void Start()
+    T Ensure<T>() where T : Component
+    {
+        T component = GetComponent<T>();
+        return component != null ? component : gameObject.AddComponent<T>();
+    }
+    void EnsureComponents()
+    {
+        // Entity, pickup and projectile layers are handled by their own systems.
+        obstacleMask = obstacleMask.value & ~((1 << 8) | (1 << 9) | (1 << 10));
+        steering = Ensure<SteeringAgent>();
+        pursuit = Ensure<PursuitBehavior>();
+        evasion = Ensure<EvasionBehavior>();
+        wallFollowing = Ensure<WallFollowingBehavior>();
+        flowFollowing = Ensure<FlowFieldFollowingBehavior>();
+        flowField = Ensure<NavMeshFlowField>();
+        predictiveEvasion = Ensure<PredictiveEvasionBehavior>();
+        ObstacleAvoidanceBehavior avoidance = Ensure<ObstacleAvoidanceBehavior>();
+        avoidance.obstacleLayer = obstacleMask;
+        avoidance.weight = 7f;
+        avoidance.enabled = true;
+        SeparationBehavior separation = Ensure<SeparationBehavior>();
+        separation.weight = 2.4f; separation.enabled = true;
+        UnalignedCollisionAvoidanceBehavior crossing = Ensure<UnalignedCollisionAvoidanceBehavior>();
+        crossing.weight = 2.8f; crossing.enabled = true;
+        predictiveEvasion.weight = 4f; predictiveEvasion.enabled = true;
+        wallFollowing.weight = 0.8f;
+        wallFollowing.wallLayer = (1 << 6) | (1 << 7);
+        flowFollowing.flowField = flowField;
+        flowFollowing.weight = 1.7f;
+        pursuit.weight = 2.5f;
+        evasion.weight = 2.5f;
+        foreach (WanderBehavior oldWander in GetComponents<WanderBehavior>()) oldWander.enabled = false;
+        foreach (SeekBehavior oldSeek in GetComponents<SeekBehavior>()) oldSeek.enabled = false;
+        // Floating-light art is offset independently of the root on the NavMesh.
+        if (GetComponent<Light>() != null)
+        {
+            Transform sphere = transform.Find("Sphere");
+            if (sphere != null && sphere.GetComponent<MeshRenderer>() != null)
+            {
+                Vector3 visualPosition = sphere.localPosition;
+                visualPosition.y = Mathf.Max(0.9f, visualPosition.y);
+                sphere.localPosition = visualPosition;
+            }
+        }
+        steering.collisionMask = obstacleMask;
+        steering.maxForce = 24f;
+        steering.RefreshBehaviors();
+    }
+
+    public void Initialize(RoomData homeRoom, Transform playerTarget, bool confinedToRoom)
+    {
+        EnsureComponents();
+        HomeRoom = homeRoom;
+        ConfinedToRoom = confinedToRoom && homeRoom != null;
+        player = playerTarget;
+        anxiety = null;
+        ResolvePlayer();
+        steering.Configure(HomeRoom, ConfinedToRoom);
+        bool bound = steering.BindToNavigation(transform.position);
+        if (!bound && HomeRoom != null) bound = steering.BindToNavigation(HomeRoom.FloorCenter);
+        if (!bound && HomeRoom != null)
+        {
+            for (int i = 0; i < 20 && !bound; i++) bound = steering.BindToNavigation(RandomRoomPoint());
+        }
+        useFlowPatrol = (spawnSequence++ % 2) == 0;
+        defeated = false;
+        initialized = true;
+        hasPatrolGoal = hasHideGoal = false;
+        impactEvadeUntil = waitUntil = nextDecision = nextHideSearch = 0f;
+        lastSeenTime = -100f;
+        waypointIndex = patrolLeg = 0;
+        pursuit.target = evasion.target = player;
+        pursuit.ResetPrediction(); evasion.ResetPrediction();
+        flowField.Invalidate();
+        SetState(EnemyState.Patrol);
+    }
+
+    void ResolvePlayer()
     {
         if (player == null)
         {
-            GameObject p = GameObject.FindGameObjectWithTag("Player");
-            if (p != null) player = p.transform;
+            GameObject candidate = GameObject.FindGameObjectWithTag("Player");
+            if (candidate != null) player = candidate.transform;
             else if (Camera.main != null) player = Camera.main.transform;
         }
-
-        InicializarPuntosDePatrulla();
-        CambiarEstado(EnemyState.Patrol);
+        if (player != null && anxiety == null)
+            anxiety = player.GetComponentInParent<AnxietyManager>();
     }
 
     void Update()
     {
-        if (isTraversingLink) return;
-
-        // 1. Revisar si estamos cruzando un NavMeshLink (Jump / Drop)
-        if (agent.isOnOffMeshLink)
+        if (defeated || Time.deltaTime <= 0f) return;
+        if (!initialized)
         {
-            StartCoroutine(TraverseOffMeshLinkRoutine());
-            return;
-        }
-
-        // 2. Comprobar Visión directa del jugador
-        bool canSee = CanSeePlayer();
-        if (canSee)
-        {
-            lastKnownPlayerPos = player.position;
-            timeSinceLastSeen = 0f;
-            if (currentState != EnemyState.Chase)
+            RoomData closest = null;
+            float distance = float.MaxValue;
+            foreach (RoomData room in Object.FindObjectsByType<RoomData>(FindObjectsSortMode.None))
             {
-                CambiarEstado(EnemyState.Chase);
+                if (!room.ContainsMovementPoint(transform.position)) continue;
+                float d = SteeringAgent.PlanarDistance(transform.position, room.FloorCenter);
+                if (d < distance) { closest = room; distance = d; }
             }
+            Initialize(closest, player, closest != null);
+        }
+        ResolvePlayer();
+        pursuit.target = evasion.target = player;
+        if (!steering.IsOnNavigation) return;
+        if (Time.time < nextDecision) return;
+        nextDecision = Time.time + 0.15f;
+
+        bool visible = CanSeePlayer();
+        if (visible && player != null)
+        {
+            lastKnownPlayerPosition = player.position;
+            lastSeenTime = Time.time;
+        }
+        bool danger = TryDangerEscape(out Vector3 dangerEscape);
+        bool empowered = PlayerPowerState.Instance != null && PlayerPowerState.Instance.IsEmpowered;
+        if (danger || Time.time < impactEvadeUntil)
+        {
+            SetState(EnemyState.Evade);
+            if (danger) steering.SetRouteGoal(dangerEscape);
+            else if (hasHideGoal) steering.SetRouteGoal(hideGoal);
+        }
+        else if (empowered && player != null)
+        {
+            if (!hasHideGoal || Time.time >= nextHideSearch
+                || SteeringAgent.PlanarDistance(hideGoal, player.position) < 3f)
+                SelectHidePoint();
+            bool concealed = hasHideGoal && IsOccludedFromPlayer(transform.position);
+            SetState(concealed ? EnemyState.Hide : EnemyState.Evade);
+            if (hasHideGoal) steering.SetRouteGoal(hideGoal);
+        }
+        else if (anxiety != null && anxiety.IsCritical && player != null && visible)
+        {
+            SetState(EnemyState.Chase);
+            steering.SetRouteGoal(pursuit.PredictedTargetPosition());
+        }
+        else if (anxiety != null && anxiety.IsCritical && Time.time - lastSeenTime < loseTargetTime)
+        {
+            SetState(EnemyState.Investigate);
+            steering.SetRouteGoal(lastKnownPlayerPosition);
         }
         else
         {
-            timeSinceLastSeen += Time.deltaTime;
+            SetState(EnemyState.Patrol);
+            UpdatePatrol();
         }
-
-        // 3. Ejecutar lógica según el estado actual
-        switch (currentState)
-        {
-            case EnemyState.Patrol:
-                ActualizarPatrulla();
-                break;
-            case EnemyState.Chase:
-                ActualizarPersecucion();
-                break;
-            case EnemyState.Investigate:
-                ActualizarInvestigacion();
-                break;
-        }
-
-        // 4. Giro suave con Cuaterniones (LookRotation + Slerp)
-        ActualizarRotacionSuave();
+        ApplyWeights();
     }
 
-    void CambiarEstado(EnemyState nuevoEstado)
+    void SetState(EnemyState state)
     {
-        currentState = nuevoEstado;
-        switch (currentState)
+        if (currentState != state)
         {
-            case EnemyState.Patrol:
-                agent.speed = patrolSpeed;
-                agent.stoppingDistance = waypointStoppingDistance;
-                IrASiguienteWaypoint();
-                break;
-
-            case EnemyState.Chase:
-                agent.speed = chaseSpeed;
-                agent.stoppingDistance = 1.5f;
-                isWaitingAtPoint = false;
-                StopAllCoroutines();
-                break;
-
-            case EnemyState.Investigate:
-                agent.speed = patrolSpeed * 1.2f;
-                agent.stoppingDistance = 1.0f;
-                agent.SetDestination(lastKnownPlayerPos);
-                break;
+            currentState = state;
+            flowField.Invalidate();
+            if (state == EnemyState.Patrol) hasPatrolGoal = false;
+            if (state != EnemyState.Evade && state != EnemyState.Hide) hasHideGoal = false;
         }
+        ApplyWeights();
+    }
+    void ApplyWeights()
+    {
+        if (steering == null) return;
+        steering.maxSpeed = currentState == EnemyState.Chase ? chaseSpeed
+            : currentState == EnemyState.Evade ? evadeSpeed : patrolSpeed;
+        steering.routeWeight = 1.6f;
+        pursuit.enabled = currentState == EnemyState.Chase;
+        evasion.enabled = currentState == EnemyState.Evade && player != null;
+        wallFollowing.enabled = currentState == EnemyState.Patrol || currentState == EnemyState.Hide;
+        flowFollowing.enabled = currentState == EnemyState.Patrol && ((patrolLeg % 2 == 0) == useFlowPatrol);
+        if (flowFollowing.enabled && steering.HasRoute) flowField.Configure(steering, steering.RouteGoal);
     }
 
-    void ActualizarPatrulla()
+    void UpdatePatrol()
     {
-        if (patrolPoints.Count == 0)
+        if (Time.time < waitUntil) return;
+        if (hasPatrolGoal && SteeringAgent.PlanarDistance(transform.position, patrolGoal) < waypointStoppingDistance)
         {
-            // Fallback: Si no hay puntos generados, crear un punto aleatorio en NavMesh
-            if (!agent.hasPath || agent.remainingDistance <= agent.stoppingDistance)
-            {
-                Vector3 randomDirection = Random.insideUnitSphere * 15f + transform.position;
-                if (NavMesh.SamplePosition(randomDirection, out NavMeshHit hit, 15f, NavMesh.AllAreas))
-                {
-                    agent.SetDestination(hit.position);
-                }
-            }
+            hasPatrolGoal = false;
+            waitUntil = Time.time + waitTimeAtWaypoint;
+            patrolLeg++;
             return;
         }
-
-        if (!agent.pathPending && agent.remainingDistance <= agent.stoppingDistance && !isWaitingAtPoint)
+        if (!hasPatrolGoal)
         {
-            StartCoroutine(WaitAtWaypointRoutine());
+            for (int attempt = 0; attempt < 20; attempt++)
+            {
+                Transform waypoint = customWaypoints.Count > 0 ? customWaypoints[waypointIndex++ % customWaypoints.Count] : null;
+                Vector3 candidate = waypoint != null ? waypoint.position : RandomRoomPoint();
+                if (!steering.TryReachablePoint(candidate, out Vector3 point)
+                    || SteeringAgent.PlanarDistance(transform.position, point) < 1.2f) continue;
+                patrolGoal = point;
+                hasPatrolGoal = true;
+                break;
+            }
+        }
+        if (hasPatrolGoal && !steering.SetRouteGoal(patrolGoal)) hasPatrolGoal = false;
+    }
+
+    Vector3 RandomRoomPoint()
+    {
+        if (HomeRoom != null && ConfinedToRoom)
+        {
+            Bounds bounds = HomeRoom.MovementBounds;
+            return new Vector3(Random.Range(bounds.min.x, bounds.max.x), HomeRoom.FloorCenter.y,
+                Random.Range(bounds.min.z, bounds.max.z));
+        }
+        Vector2 offset = Random.insideUnitCircle * 10f;
+        return transform.position + new Vector3(offset.x, 0f, offset.y);
+    }
+
+    void SelectHidePoint()
+    {
+        nextHideSearch = Time.time + 1.5f;
+        float bestScore = float.NegativeInfinity;
+        hasHideGoal = false;
+        for (int i = 0; i < 28; i++)
+        {
+            Vector3 candidate = RandomRoomPoint();
+            if (!steering.TryReachablePoint(candidate, out Vector3 point)) continue;
+            float playerDistance = player != null ? SteeringAgent.PlanarDistance(point, player.position) : 8f;
+            bool cover = player != null && IsOccludedFromPlayer(point);
+            float score = playerDistance + (cover ? 30f : 0f)
+                - SteeringAgent.PlanarDistance(transform.position, point) * 0.15f;
+            if (score <= bestScore) continue;
+            bestScore = score;
+            hideGoal = point;
+            hasHideGoal = true;
         }
     }
 
-    IEnumerator WaitAtWaypointRoutine()
-    {
-        isWaitingAtPoint = true;
-        yield return new WaitForSeconds(waitTimeAtWaypoint);
-        currentWaypointIndex = (currentWaypointIndex + 1) % patrolPoints.Count;
-        IrASiguienteWaypoint();
-        isWaitingAtPoint = false;
-    }
-
-    void IrASiguienteWaypoint()
-    {
-        if (patrolPoints.Count == 0) return;
-        agent.SetDestination(patrolPoints[currentWaypointIndex]);
-    }
-
-    void ActualizarPersecucion()
-    {
-        if (player != null)
-        {
-            agent.SetDestination(player.position);
-        }
-
-        // Si perdimos de vista al jugador por más tiempo que loseTargetTime
-        if (timeSinceLastSeen > loseTargetTime)
-        {
-            CambiarEstado(EnemyState.Investigate);
-        }
-    }
-
-    void ActualizarInvestigacion()
-    {
-        // Llegó a la última posición conocida
-        if (!agent.pathPending && agent.remainingDistance <= agent.stoppingDistance + 0.5f)
-        {
-            CambiarEstado(EnemyState.Patrol);
-        }
-    }
-
-    bool CanSeePlayer()
+    bool IsOccludedFromPlayer(Vector3 point)
     {
         if (player == null) return false;
-
-        Vector3 eyePos = transform.position + Vector3.up * 1.2f;
-        Vector3 targetPos = player.position + Vector3.up * 1.0f;
-        Vector3 dirToTarget = targetPos - eyePos;
-        float distToTarget = dirToTarget.magnitude;
-
-        if (distToTarget > detectionRadius) return false;
-
-        // Comprobación de ángulo de visión (FOV)
-        float angle = Vector3.Angle(transform.forward, dirToTarget.normalized);
-        if (angle <= fieldOfViewAngle * 0.5f)
+        Vector3 start = player.position + Vector3.up;
+        Vector3 target = point + Vector3.up;
+        foreach (RaycastHit hit in Physics.RaycastAll(start, target - start, Vector3.Distance(start, target),
+            obstacleMask, QueryTriggerInteraction.Ignore))
         {
-            // Raycast para verificar si no hay paredes entre enemigo y jugador
-            if (Physics.Raycast(eyePos, dirToTarget.normalized, out RaycastHit hit, distToTarget, obstacleMask))
-            {
-                if (hit.transform.CompareTag("Player") || hit.transform == player || hit.transform.IsChildOf(player))
-                {
-                    return true;
-                }
-            }
+            if (hit.transform == transform || hit.transform.IsChildOf(transform)
+                || hit.transform == player || hit.transform.IsChildOf(player)) continue;
+            return true;
         }
         return false;
     }
 
-    void ActualizarRotacionSuave()
+    bool CanSeePlayer()
     {
-        Vector3 dir = agent.desiredVelocity;
-        dir.y = 0; // Mantener rotación en el plano horizontal
-
-        if (dir.sqrMagnitude > 0.05f)
-        {
-            Quaternion targetRot = Quaternion.LookRotation(dir.normalized);
-            transform.rotation = Quaternion.Slerp(transform.rotation, targetRot, Time.deltaTime * rotationSpeed);
-        }
+        if (player == null || SteeringAgent.PlanarDistance(transform.position, player.position) > detectionRadius) return false;
+        Vector3 direction = player.position - transform.position; direction.y = 0f;
+        if (Vector3.Angle(transform.forward, direction) > fieldOfViewAngle * 0.5f) return false;
+        return !IsOccludedFromPlayer(transform.position);
     }
 
-    IEnumerator TraverseOffMeshLinkRoutine()
+    bool TryDangerEscape(out Vector3 escape)
     {
-        isTraversingLink = true;
-        currentState = EnemyState.TraverseJumpLink;
-
-        OffMeshLinkData linkData = agent.currentOffMeshLinkData;
-        Vector3 startPos = agent.transform.position;
-        Vector3 endPos = linkData.endPos + Vector3.up * agent.baseOffset;
-
-        float timer = 0f;
-        while (timer < jumpDuration)
+        escape = transform.position;
+        BallisticDangerZone threat = null;
+        foreach (BallisticDangerZone zone in BallisticDangerZone.ActiveDangerZones)
         {
-            timer += Time.deltaTime;
-            float t = timer / jumpDuration;
-
-            // Parábola de salto: y = 4 * h * t * (1 - t)
-            float verticalOffset = 4f * jumpHeight * t * (1f - t);
-            Vector3 currentPos = Vector3.Lerp(startPos, endPos, t) + Vector3.up * verticalOffset;
-            
-            // Orientar hacia el destino del salto
-            Vector3 jumpDir = (endPos - startPos);
-            jumpDir.y = 0;
-            if (jumpDir.sqrMagnitude > 0.01f)
-            {
-                transform.rotation = Quaternion.Slerp(transform.rotation, Quaternion.LookRotation(jumpDir.normalized), Time.deltaTime * rotationSpeed);
-            }
-
-            transform.position = currentPos;
-            yield return null;
+            if (zone == null || zone.timeToImpact <= 0f) continue;
+            if (SteeringAgent.PlanarDistance(transform.position, zone.predictedImpactPoint)
+                < zone.dangerRadius + predictiveEvasion.safetyBuffer) { threat = zone; break; }
         }
-
-        agent.CompleteOffMeshLink();
-        isTraversingLink = false;
-        CambiarEstado(EnemyState.Patrol);
-    }
-
-    void InicializarPuntosDePatrulla()
-    {
-        patrolPoints.Clear();
-
-        // 1. Añadir waypoints manuales si fueron asignados
-        foreach (var wp in customWaypoints)
+        if (threat == null) return false;
+        float score = float.PositiveInfinity;
+        for (int i = 0; i < 16; i++)
         {
-            if (wp != null) patrolPoints.Add(wp.position);
+            float angle = i * Mathf.PI * 2f / 16f;
+            Vector3 candidate = threat.predictedImpactPoint
+                + new Vector3(Mathf.Cos(angle), 0f, Mathf.Sin(angle)) * (threat.dangerRadius + predictiveEvasion.safetyBuffer + 1f);
+            if (!steering.TryReachablePoint(candidate, out Vector3 point)) continue;
+            bool safe = true;
+            foreach (BallisticDangerZone zone in BallisticDangerZone.ActiveDangerZones)
+                if (zone != null && zone.timeToImpact > 0f
+                    && SteeringAgent.PlanarDistance(point, zone.predictedImpactPoint) < zone.dangerRadius + 0.5f) safe = false;
+            float distance = SteeringAgent.PlanarDistance(transform.position, point);
+            if (safe && distance < score) { score = distance; escape = point; }
         }
-
-        // 2. Si no hay waypoints manuales, extraer automáticamente los centros de las habitaciones
-        if (patrolPoints.Count == 0)
+        // If the whole room is threatened, stay confined and use the farthest
+        // reachable location instead of escaping through a wall or a doorway.
+        if (float.IsPositiveInfinity(score))
         {
-            RoomData[] rooms = Object.FindObjectsByType<RoomData>(FindObjectsSortMode.None);
-            foreach (var r in rooms)
-            {
-                if (r != null)
+            float farthest = -1f;
+            for (int i = 0; i < 20; i++)
+                if (steering.TryReachablePoint(RandomRoomPoint(), out Vector3 point))
                 {
-                    patrolPoints.Add(r.transform.position);
+                    float distance = SteeringAgent.PlanarDistance(point, threat.predictedImpactPoint);
+                    if (distance > farthest) { farthest = distance; escape = point; }
                 }
-            }
         }
+        return true;
     }
 
-    private void OnDrawGizmosSelected()
+    public void ReceiveProjectileImpact()
     {
-        // Visualizar rango de detección y FOV en el editor de Unity
-        Gizmos.color = Color.yellow;
-        Gizmos.DrawWireSphere(transform.position, detectionRadius);
-
-        Vector3 fovLine1 = Quaternion.AngleAxis(fieldOfViewAngle * 0.5f, Vector3.up) * transform.forward * detectionRadius;
-        Vector3 fovLine2 = Quaternion.AngleAxis(-fieldOfViewAngle * 0.5f, Vector3.up) * transform.forward * detectionRadius;
-        Gizmos.color = Color.cyan;
-        Gizmos.DrawRay(transform.position + Vector3.up * 1.2f, fovLine1);
-        Gizmos.DrawRay(transform.position + Vector3.up * 1.2f, fovLine2);
-
-        // Visualizar waypoints
-        Gizmos.color = Color.magenta;
-        foreach (var p in patrolPoints)
-        {
-            Gizmos.DrawSphere(p, 0.4f);
-        }
+        if (IsVulnerable) { Defeat(); return; }
+        if (!initialized) return;
+        impactEvadeUntil = Time.time + 3f;
+        SelectHidePoint();
+        SetState(EnemyState.Evade);
+        if (hasHideGoal) steering.SetRouteGoal(hideGoal, true);
+    }
+    public void Defeat()
+    {
+        if (!IsVulnerable || defeated) return;
+        defeated = true;
+        steering.ResetMotion();
+        if (PlayerPowerState.Instance != null) PlayerPowerState.Instance.RegisterDefeat();
+        if (EntityManager.Instance != null) EntityManager.Instance.DespawnEntity(gameObject);
+        else gameObject.SetActive(false);
+    }
+    public void InvalidateNavigation()
+    {
+        if (flowField != null) flowField.Invalidate();
+        if (steering != null && steering.HasRoute) steering.SetRouteGoal(steering.RouteGoal, true);
     }
 }

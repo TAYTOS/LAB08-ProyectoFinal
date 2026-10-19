@@ -117,6 +117,8 @@ public class MinimapUI : MonoBehaviour
 
     void Update()
     {
+        if (Time.timeScale <= 0f || OptionsMenuUI.IsOpen || GameIntroductionUI.IsOpen
+            || OptionsMenuUI.EscapeConsumedThisFrame) return;
         // Alternar visualización del mapa
         if (Keyboard.current != null && Keyboard.current[toggleKey].wasPressedThisFrame && minimapPanel != null)
         {

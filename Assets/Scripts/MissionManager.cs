@@ -38,7 +38,8 @@ public class MissionManager : MonoBehaviour
 
     void Update()
     {
-        if (Keyboard.current == null) return;
+        if (Keyboard.current == null || Time.timeScale <= 0f || OptionsMenuUI.IsOpen
+            || GameIntroductionUI.IsOpen || OptionsMenuUI.EscapeConsumedThisFrame) return;
 
         // Usar la cámara del jugador explícitamente para evitar problemas con la cámara del minimapa
         if (player == null) player = FindObjectOfType<SimplePlayerController>();

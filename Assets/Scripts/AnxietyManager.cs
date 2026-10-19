@@ -41,6 +41,65 @@ public class AnxietyManager : MonoBehaviour
     private float deathTimer = 0f;
     public bool isDead = false;
 
+    public bool IsCritical => !isDead && currentAnxiety >= criticalThreshold;
+    public RoomData CurrentRoom => currentRoom;
+    public int QuickExitCount { get; private set; }
+    public string LastFearReason { get; private set; }
+    public float quickExitSeconds = 3f;
+    public float gazeGraceSeconds = 2f;
+    private readonly Dictionary<RoomData, float> enteredRooms = new Dictionary<RoomData, float>();
+    private float lastQuickExit = -10f;
+    private EnemyAIController gazedEntity;
+    private float gazeDuration;
+
+    public void AddAnxiety(float amount)
+    {
+        if (isDead || (PlayerPowerState.Instance != null && PlayerPowerState.Instance.IsEmpowered)) return;
+        currentAnxiety = Mathf.Clamp(currentAnxiety + Mathf.Max(0f, amount), 0f, maxAnxiety);
+    }
+
+    public void Calm(float amount)
+    {
+        currentAnxiety = Mathf.Clamp(currentAnxiety - Mathf.Max(0f, amount), 0f, maxAnxiety);
+        deathTimer = 0f;
+        if (currentAnxiety < criticalThreshold) hasTriggeredConsequence = false;
+        if (currentAnxiety < entitySpawnThreshold) hasTriggeredEntity = false;
+        gazeDuration = 0f;
+    }
+
+    public void RecordRoomEntry(RoomData room)
+    {
+        if (room == null) return;
+        if (!enteredRooms.ContainsKey(room)) enteredRooms[room] = Time.time;
+        currentRoom = room;
+        UpdateRoomVisibility();
+    }
+
+    public void RecordRoomExit(RoomData room)
+    {
+        if (room == null || !enteredRooms.TryGetValue(room, out float enteredAt)) return;
+        enteredRooms.Remove(room);
+        if (room.archetype != RoomArchetype.SafeRoom && Time.time - enteredAt <= quickExitSeconds
+            && Time.time - lastQuickExit >= 5f)
+        {
+            AddAnxiety(maxAnxiety * 0.18f);
+            QuickExitCount++;
+            LastFearReason = "Retirada rápida de una habitación";
+            lastQuickExit = Time.time;
+        }
+        if (currentRoom == room)
+        {
+            currentRoom = null;
+            float best = float.MaxValue;
+            foreach (RoomData candidate in enteredRooms.Keys)
+            {
+                if (candidate == null) continue;
+                float distance = (candidate.FloorCenter - transform.position).sqrMagnitude;
+                if (distance < best) { best = distance; currentRoom = candidate; }
+            }
+        }
+    }
+
     private RoomData currentRoom;
     private bool hasTriggeredConsequence = false;
     private bool hasTriggeredEntity = false;
@@ -244,15 +303,7 @@ public class AnxietyManager : MonoBehaviour
         colorAdjustments.postExposure.value = Mathf.Lerp(colorAdjustments.postExposure.value, targetExposure, Time.deltaTime * 2f);
     }
 
-    void OnTriggerEnter(Collider other)
-    {
-        RoomData room = other.GetComponent<RoomData>();
-        if (room != null && currentRoom != room)
-        {
-            currentRoom = room;
-            UpdateRoomVisibility();
-        }
-    }
+    // RoomEntityManager cuenta los colliders del jugador y notifica una sola entrada/salida.
 
     void UpdateRoomVisibility()
     {
@@ -266,8 +317,7 @@ public class AnxietyManager : MonoBehaviour
         {
             if (r.geometryContainer != null) 
             {
-                if (r.isAlwaysRendered) r.geometryContainer.SetActive(true);
-                else r.geometryContainer.SetActive(false);
+                r.SetGeometryVisible(r.isAlwaysRendered);
             }
         }
 
@@ -318,7 +368,7 @@ public class AnxietyManager : MonoBehaviour
 
             if (roomToShow.geometryContainer != null) 
             {
-                roomToShow.geometryContainer.SetActive(true);
+                roomToShow.SetGeometryVisible(true);
             }
         }
 
@@ -327,6 +377,7 @@ public class AnxietyManager : MonoBehaviour
 
     void CalculateEnvironmentalAnxiety()
     {
+        if (PlayerPowerState.Instance != null && PlayerPowerState.Instance.IsEmpowered) return;
         if (currentRoom == null) return;
 
         // Si estamos en un espacio seguro, la ansiedad baja rápidamente y no se activan fobias
@@ -371,9 +422,39 @@ public class AnxietyManager : MonoBehaviour
         // En un espacio seguro somos inmunes a la presencia de entidades
         if (currentRoom != null && currentRoom.archetype == RoomArchetype.SafeRoom) return;
 
-        // Reservado para futuras fobias de proximidad (ej. entidades)
-        
-        currentAnxiety = Mathf.Clamp(currentAnxiety, 0f, maxAnxiety);
+        Camera camera = Camera.main;
+        EnemyAIController observed = null;
+        if (camera != null)
+        {
+            RaycastHit[] visibleHits = Physics.RaycastAll(camera.transform.position, camera.transform.forward,
+                18f + Vector3.Distance(camera.transform.position, transform.position), ~0, QueryTriggerInteraction.Ignore);
+            System.Array.Sort(visibleHits, (a, b) => a.distance.CompareTo(b.distance));
+            foreach (RaycastHit visibleHit in visibleHits)
+            {
+                if (visibleHit.transform == transform || visibleHit.transform.IsChildOf(transform)) continue;
+                observed = visibleHit.collider.GetComponentInParent<EnemyAIController>();
+                break;
+            }
+        }
+        if (observed != null && observed.gameObject.activeInHierarchy)
+        {
+            gazeDuration = observed == gazedEntity ? gazeDuration + 0.2f : 0.2f;
+            gazedEntity = observed;
+            if (gazeDuration >= gazeGraceSeconds)
+            {
+                AddAnxiety(maxAnxiety * 0.08f * 0.2f);
+                LastFearReason = "Mirada prolongada a una entidad";
+            }
+        }
+        else { gazedEntity = null; gazeDuration = 0f; }
+        if (EntityManager.Instance != null)
+        {
+            foreach (GameObject entity in EntityManager.Instance.activeEntities)
+            {
+                if (entity != null && entity.activeInHierarchy && Vector3.Distance(transform.position, entity.transform.position) < 3f)
+                { AddAnxiety(maxAnxiety * 0.02f * 0.2f); break; }
+            }
+        }
     }
 
     void CheckConsequences()
@@ -428,9 +509,9 @@ public class AnxietyManager : MonoBehaviour
             Vector3 spawnPos = transform.position - transform.forward * 8f;
             
             // Ajustamos al Y de la sala
-            spawnPos.y = currentRoom != null ? currentRoom.transform.position.y : transform.position.y; 
-            
-            Instantiate(entityPrefabToSpawn, spawnPos, Quaternion.identity);
+            spawnPos.y = 0f;
+            if (EntityManager.Instance != null)
+                EntityManager.Instance.SpawnEntity(entityPrefabToSpawn, spawnPos, Quaternion.identity, null, currentRoom, false);
             Debug.Log("¡Una entidad ha aparecido a tus espaldas debido al terror extremo!");
         }
     }
@@ -445,6 +526,8 @@ public class AnxietyManager : MonoBehaviour
             // Alterar arquitectura: crear un muro negro gigante en medio del cuarto
             // que bloquee el paso y cambie la forma de navegarlo
             GameObject glitchWall = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            glitchWall.layer = 7;
+            glitchWall.transform.SetParent(room.transform);
             glitchWall.transform.position = room.transform.position; 
             
             // Lo hacemos casi tan largo como la habitación, pero delgado
@@ -462,6 +545,8 @@ public class AnxietyManager : MonoBehaviour
             for(int i = 0; i < pillars; i++)
             {
                 GameObject pillar = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                pillar.layer = 7;
+                pillar.transform.SetParent(room.transform);
                 Vector3 randomPos = room.transform.position + new Vector3(
                     Random.Range(-box.size.x * 0.4f, box.size.x * 0.4f),
                     0f,
@@ -494,6 +579,7 @@ public class AnxietyManager : MonoBehaviour
             
             // Cambiamos el estado interno
             room.illuminationLevel = 0f; 
+            if (ProceduralLevelGenerator.Instance != null) ProceduralLevelGenerator.Instance.RequestNavigationRebuild();
         }
     }
 

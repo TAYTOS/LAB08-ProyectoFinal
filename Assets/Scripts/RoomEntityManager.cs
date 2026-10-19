@@ -1,87 +1,91 @@
 using UnityEngine;
 using System.Collections.Generic;
 
-/// <summary>
-/// Se adjunta al mismo objeto que el RoomData (el Trigger de la habitación).
-/// Administra qué entidades deben "despertar" cuando el jugador entra al área.
-/// </summary>
 [RequireComponent(typeof(RoomData))]
 public class RoomEntityManager : MonoBehaviour
 {
-    private RoomData roomData;
-    
-    [Header("Configuración de Entidades")]
     public GameObject[] possibleEnemies;
     public int maxEnemiesInRoom = 1;
-    
-    // Lista de entidades que actualmente están vivas en ESTE cuarto
-    private List<GameObject> spawnedEntities = new List<GameObject>();
-    private bool isPlayerNearby = false;
+    public bool allowSpawn = true;
+    public float sleepDelay = 8f;
+    private RoomData roomData;
+    private readonly List<GameObject> spawnedEntities = new List<GameObject>();
+    private readonly HashSet<Collider> playerColliders = new HashSet<Collider>();
+    private float leftAt = -1f;
+    private bool clearedByPlayer;
 
-    void Awake()
-    {
-        roomData = GetComponent<RoomData>();
-    }
+    void Awake() { roomData = GetComponent<RoomData>(); }
 
     void OnTriggerEnter(Collider other)
     {
-        if (other.CompareTag("Player") && !isPlayerNearby)
+        if (other.isTrigger) return; // Ignorar el sensor de proximidad; cuenta la entrada del cuerpo.
+        if (other.GetComponentInParent<SimplePlayerController>() == null) return;
+        bool firstCollider = playerColliders.Count == 0;
+        if (!playerColliders.Add(other)) return;
+        leftAt = -1f;
+        if (firstCollider)
         {
-            isPlayerNearby = true;
+            AnxietyManager fear = other.GetComponentInParent<AnxietyManager>();
+            if (fear != null) fear.RecordRoomEntry(roomData);
             ActivateRoom();
-            
-            // Opcional: Si quieres que el monstruo te persiga desde lejos, 
-            // puedes llamar a un método que active las habitaciones adyacentes también:
-            // ActivarHabitacionesVecinas();
         }
     }
 
     void OnTriggerExit(Collider other)
     {
-        if (other.CompareTag("Player") && isPlayerNearby)
+        if (other.isTrigger) return;
+        if (!playerColliders.Remove(other)) return;
+        if (playerColliders.Count == 0)
         {
-            isPlayerNearby = false;
-            // Cuando el jugador sale, devolvemos las entidades al Pool para ahorrar recursos.
-            DeactivateRoom();
+            leftAt = Time.time;
+            AnxietyManager fear = other.GetComponentInParent<AnxietyManager>();
+            if (fear != null) fear.RecordRoomExit(roomData);
         }
     }
 
-    private void ActivateRoom()
+    void Update()
     {
-        if (EntityManager.Instance == null || possibleEnemies == null || possibleEnemies.Length == 0) return;
-        if (spawnedEntities.Count > 0) return; // Ya hay entidades activas
-
-        // Lógica de juego: En los Backrooms, quizá solo queremos enemigos en cuartos oscuros o batofóbicos
-        if (roomData.archetype == RoomArchetype.Dark || roomData.archetype == RoomArchetype.Batophobic)
+        if (leftAt >= 0f && Time.time - leftAt >= sleepDelay)
         {
-            int toSpawn = Random.Range(0, maxEnemiesInRoom + 1); // Puede que spawnee 0 (miedo a lo desconocido)
-            
-            for (int i = 0; i < toSpawn; i++)
-            {
-                GameObject prefab = possibleEnemies[Random.Range(0, possibleEnemies.Length)];
-                
-                // Variar un poco la posición dentro de los límites del cuarto
-                Vector3 spawnPos = transform.position + new Vector3(Random.Range(-2f, 2f), 1f, Random.Range(-2f, 2f));
-                
-                // Pedimos al Manager Global que nos preste una entidad
-                GameObject entity = EntityManager.Instance.SpawnEntity(prefab, spawnPos, Quaternion.identity);
-                spawnedEntities.Add(entity);
-            }
+            DeactivateRoom();
+            leftAt = -1f;
+        }
+    }
+
+    public void ActivateRoom()
+    {
+        if (!allowSpawn || clearedByPlayer || roomData.archetype == RoomArchetype.SafeRoom
+            || EntityManager.Instance == null || possibleEnemies == null || possibleEnemies.Length == 0) return;
+        if (spawnedEntities.Count > 0)
+        {
+            if (spawnedEntities.Exists(entity => entity != null && entity.activeInHierarchy
+                && entity.GetComponent<EnemyAIController>() != null
+                && entity.GetComponent<EnemyAIController>().HomeRoom == roomData)) return;
+            clearedByPlayer = true;
+            return;
+        }
+        for (int i = 0; i < Mathf.Max(0, maxEnemiesInRoom); i++)
+        {
+            GameObject prefab = possibleEnemies[Random.Range(0, possibleEnemies.Length)];
+            Vector3 desired = roomData.FloorCenter + new Vector3(i * 1.2f, 0f, 1f);
+            GameObject entity = EntityManager.Instance.SpawnEntity(prefab, desired, Quaternion.identity,
+                null, roomData, true);
+            if (entity != null) spawnedEntities.Add(entity);
         }
     }
 
     private void DeactivateRoom()
     {
-        if (EntityManager.Instance == null) return;
-
-        // Limpiar el cuarto (mandar todo a dormir)
+        bool hadSurvivor = false;
         foreach (GameObject entity in spawnedEntities)
         {
-            if (entity != null)
-            {
-                EntityManager.Instance.DespawnEntity(entity);
-            }
+            if (entity == null || !entity.activeInHierarchy) continue;
+            EnemyAIController owner = entity.GetComponent<EnemyAIController>();
+            if (owner == null || owner.HomeRoom != roomData || !owner.ConfinedToRoom) continue;
+            hadSurvivor = true;
+            if (EntityManager.Instance != null) EntityManager.Instance.DespawnEntity(entity);
         }
+        if (!hadSurvivor && spawnedEntities.Count > 0) clearedByPlayer = true;
         spawnedEntities.Clear();
     }
 }

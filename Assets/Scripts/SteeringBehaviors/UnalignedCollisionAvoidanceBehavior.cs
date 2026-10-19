@@ -1,78 +1,31 @@
 using UnityEngine;
-
 public class UnalignedCollisionAvoidanceBehavior : SteeringBehavior
 {
     public float predictionTime = 2f;
-    public float avoidanceRadius = 2f;
-    public string agentTag = "Enemy";
-
+    public float avoidanceRadius = 1.3f;
     public override Vector3 CalculateForce()
     {
-        GameObject[] otherAgents = GameObject.FindGameObjectsWithTag(agentTag);
-        
-        float shortestTime = float.MaxValue;
-        GameObject firstTarget = null;
-        float firstMinSeparation = 0;
-        float firstDistance = 0;
-        Vector3 firstRelativePos = Vector3.zero;
-        Vector3 firstRelativeVel = Vector3.zero;
-
-        // 1. Encontrar la colisión más inminente
-        foreach (GameObject other in otherAgents)
+        float earliest = predictionTime + 1f;
+        Vector3 escape = Vector3.zero;
+        foreach (SteeringAgent other in SteeringAgent.ActiveAgents)
         {
-            if (other == gameObject) continue;
-            
-            SteeringAgent otherAgent = other.GetComponent<SteeringAgent>();
-            if (otherAgent == null) continue;
-
-            Vector3 relativePos = other.transform.position - transform.position;
-            Vector3 relativeVel = otherAgent.velocity - agent.velocity;
-            
-            float relativeSpeed = relativeVel.magnitude;
-            if (relativeSpeed == 0) continue;
-
-            // Tiempo hasta el punto más cercano de aproximación
-            float timeToCollision = -Vector3.Dot(relativePos, relativeVel) / (relativeSpeed * relativeSpeed);
-            
-            if (timeToCollision <= 0 || timeToCollision > predictionTime) continue;
-
-            // Distancia en ese punto futuro
-            float distance = relativePos.magnitude;
-            float minSeparation = distance - relativeSpeed * timeToCollision;
-            
-            if (minSeparation > avoidanceRadius) continue;
-
-            if (timeToCollision > 0 && timeToCollision < shortestTime)
-            {
-                shortestTime = timeToCollision;
-                firstTarget = other;
-                firstMinSeparation = minSeparation;
-                firstDistance = distance;
-                firstRelativePos = relativePos;
-                firstRelativeVel = relativeVel;
-            }
+            if (other == null || other == agent) continue;
+            Vector3 position = other.transform.position - transform.position;
+            Vector3 relativeVelocity = other.velocity - agent.velocity;
+            position.y = relativeVelocity.y = 0f;
+            float speedSquared = relativeVelocity.sqrMagnitude;
+            if (speedSquared < 0.0001f) continue;
+            float time = -Vector3.Dot(position, relativeVelocity) / speedSquared;
+            if (time < 0f || time > predictionTime || time >= earliest) continue;
+            Vector3 closestOffset = position + relativeVelocity * time;
+            float safeRadius = Mathf.Max(avoidanceRadius, agent.Radius + other.Radius + 0.25f);
+            if (closestOffset.magnitude >= safeRadius) continue;
+            earliest = time;
+            escape = -closestOffset;
+            if (escape.sqrMagnitude < 0.01f)
+                escape = Vector3.Cross(relativeVelocity.normalized, Vector3.up);
         }
-
-        // 2. Calcular fuerza de evasión predictiva
-        if (firstTarget != null)
-        {
-            Vector3 evasionDirection;
-            if (firstMinSeparation <= 0 || firstDistance < avoidanceRadius)
-            {
-                // Si ya estamos muy cerca, simplemente separarse
-                evasionDirection = transform.position - firstTarget.transform.position;
-            }
-            else
-            {
-                // Evadir la posición futura calculada
-                Vector3 futureRelativePos = firstRelativePos + firstRelativeVel * shortestTime;
-                evasionDirection = -futureRelativePos;
-            }
-
-            Vector3 desired = evasionDirection.normalized * agent.maxSpeed;
-            return desired - agent.velocity;
-        }
-
-        return Vector3.zero;
+        if (earliest > predictionTime) return Vector3.zero;
+        return escape.normalized * agent.maxSpeed - agent.velocity;
     }
 }

@@ -16,9 +16,9 @@ TagManager:
   - UI
   - Room
   - Wall
-  - 
-  - 
-  - 
+  - Entity
+  - Projectile
+  - Pickup
   - 
   - 
   - 

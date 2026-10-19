@@ -33,9 +33,16 @@ public class AnxietyUI : MonoBehaviour
 
     private float ansiedadVisualSuave = 0f;
     private Vector3 escalaOriginalCorazon = Vector3.one;
+    private bool externalGameplayHUD;
 
     void Start()
     {
+        externalGameplayHUD = FindFirstObjectByType<GameplayStatusHUD>() != null;
+        if (externalGameplayHUD)
+        {
+            if (textoMision != null) textoMision.enabled = false;
+            if (textoConteoKeynotes != null) textoConteoKeynotes.enabled = false;
+        }
         if (anxietyManager == null)
         {
             anxietyManager = FindObjectOfType<AnxietyManager>();
@@ -98,7 +105,7 @@ public class AnxietyUI : MonoBehaviour
         }
 
         // Generar Texto de Misión automáticamente si no existe
-        if (textoMision == null && textoFobias != null)
+        if (!externalGameplayHUD && textoMision == null && textoFobias != null)
         {
             GameObject misionObj = new GameObject("TextoMision");
             misionObj.transform.SetParent(textoFobias.transform.parent, false);
@@ -117,7 +124,7 @@ public class AnxietyUI : MonoBehaviour
         }
 
         // Generar Texto de Conteo de Keynotes automáticamente si no existe
-        if (textoConteoKeynotes == null && textoMision != null)
+        if (!externalGameplayHUD && textoConteoKeynotes == null && textoMision != null)
         {
             GameObject conteoObj = new GameObject("TextoConteoKeynotes");
             conteoObj.transform.SetParent(textoMision.transform.parent, false);
@@ -219,7 +226,7 @@ public class AnxietyUI : MonoBehaviour
 
         // 5.5 Actualizar Texto de Mision (Leyendo del MissionManager)
         MissionManager missionManager = FindObjectOfType<MissionManager>();
-        if (textoMision != null && missionManager != null)
+        if (!externalGameplayHUD && textoMision != null && missionManager != null)
         {
             if (missionManager.isMissionUIActive)
             {

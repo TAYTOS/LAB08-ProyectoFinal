@@ -1,49 +1,21 @@
 using UnityEngine;
-using System.Collections.Generic;
-
 public class SeparationBehavior : SteeringBehavior
 {
     public float separationRadius = 2f;
-    public string tagToSeparate = "Enemy";
-
     public override Vector3 CalculateForce()
     {
         Vector3 force = Vector3.zero;
-        int neighborCount = 0;
-        
-        // Para mayor rendimiento en un juego final, usa Physics.OverlapSphereNonAlloc
-        GameObject[] neighbors = GameObject.FindGameObjectsWithTag(tagToSeparate);
-        
-        foreach (GameObject neighbor in neighbors)
+        foreach (SteeringAgent neighbor in SteeringAgent.ActiveAgents)
         {
-            if (neighbor != gameObject)
-            {
-                Vector3 toNeighbor = transform.position - neighbor.transform.position;
-                float dist = toNeighbor.magnitude;
-                
-                if (dist > 0 && dist < separationRadius)
-                {
-                    // La fuerza de separación aumenta cuanto más cerca están
-                    Vector3 pushForce = toNeighbor.normalized / dist;
-                    force += pushForce;
-                    neighborCount++;
-                }
-            }
+            if (neighbor == null || neighbor == agent) continue;
+            Vector3 away = transform.position - neighbor.transform.position; away.y = 0f;
+            float distance = away.magnitude;
+            if (distance >= separationRadius) continue;
+            if (distance < 0.01f)
+                away = agent.GetInstanceID() < neighbor.GetInstanceID() ? Vector3.right : Vector3.left;
+            else away /= distance;
+            force += away * (1f - Mathf.Clamp01(distance / separationRadius)) * agent.maxSpeed;
         }
-        
-        if (neighborCount > 0)
-        {
-            force /= neighborCount;
-            force = force.normalized * agent.maxSpeed;
-            return force - agent.velocity;
-        }
-
-        return Vector3.zero;
-    }
-    
-    private void OnDrawGizmosSelected()
-    {
-        Gizmos.color = Color.magenta;
-        Gizmos.DrawWireSphere(transform.position, separationRadius);
+        return Vector3.ClampMagnitude(force, agent.maxSpeed * 2f);
     }
 }

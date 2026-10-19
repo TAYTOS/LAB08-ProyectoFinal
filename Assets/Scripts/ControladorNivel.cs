@@ -92,6 +92,7 @@ public class ControladorNivel : MonoBehaviour
             if (barrera != null) Destroy(barrera);
         }
         barrerasSalida.Clear();
+        if (ProceduralLevelGenerator.Instance != null) ProceduralLevelGenerator.Instance.RequestNavigationRebuild();
         
         Debug.Log("¡Salida Desbloqueada! Dirígete a la Zona Segura Final.");
         // Opcional: Mostrar un mensaje en pantalla indicando que escapen

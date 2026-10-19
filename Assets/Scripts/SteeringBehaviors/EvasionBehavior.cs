@@ -1,47 +1,31 @@
 using UnityEngine;
-
 public class EvasionBehavior : SteeringBehavior
 {
     public Transform target;
-    [Tooltip("El radio dentro del cual empezamos a evadir")]
-    public float evasionRadius = 15f; 
-    
-    private Vector3 targetLastPos;
-
-    protected override void Awake()
+    public float evasionRadius = 15f;
+    public float maximumPrediction = 1f;
+    private Vector3 lastPosition;
+    private Vector3 targetVelocity;
+    private Transform trackedTarget;
+    public void ResetPrediction()
     {
-        base.Awake();
-        
-        if (target == null)
-        {
-            GameObject player = GameObject.FindGameObjectWithTag("Player");
-            if (player != null) target = player.transform;
-            else if (Camera.main != null) target = Camera.main.transform;
-        }
-
-        if (target != null) targetLastPos = target.position;
+        trackedTarget = target;
+        lastPosition = target != null ? target.position : Vector3.zero;
+        targetVelocity = Vector3.zero;
     }
-
+    void OnEnable() { ResetPrediction(); }
     public override Vector3 CalculateForce()
     {
-        if (target == null) return Vector3.zero;
-
-        Vector3 toTarget = target.position - transform.position;
-        float distance = toTarget.magnitude;
-
-        // Si el objetivo está muy lejos, no hay necesidad de evadir
+        if (target == null || Time.deltaTime <= 0f) return Vector3.zero;
+        if (trackedTarget != target) ResetPrediction();
+        targetVelocity = Vector3.ClampMagnitude((target.position - lastPosition) / Time.deltaTime, 12f);
+        targetVelocity.y = 0f;
+        lastPosition = target.position;
+        float distance = SteeringAgent.PlanarDistance(transform.position, target.position);
         if (distance > evasionRadius) return Vector3.zero;
-
-        // Estimar velocidad del objetivo
-        Vector3 targetVelocity = (target.position - targetLastPos) / Time.deltaTime;
-        targetLastPos = target.position;
-
-        // Limitar la predicción
-        float lookAheadTime = distance / agent.maxSpeed;
-        Vector3 futurePosition = target.position + targetVelocity * lookAheadTime;
-
-        // Flee (huir) desde la posición futura
-        Vector3 desired = (transform.position - futurePosition).normalized * agent.maxSpeed;
-        return desired - agent.velocity;
+        Vector3 future = target.position + targetVelocity * Mathf.Min(maximumPrediction, distance / Mathf.Max(0.1f, agent.maxSpeed));
+        Vector3 away = transform.position - future; away.y = 0f;
+        if (away.sqrMagnitude < 0.001f) away = -target.forward;
+        return agent.GetNavigableDesiredVelocity(transform.position + away.normalized * 5f) - agent.velocity;
     }
 }

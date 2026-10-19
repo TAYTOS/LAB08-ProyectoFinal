@@ -2,126 +2,183 @@ using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.SceneManagement;
 using UnityEngine.InputSystem;
+using UnityEngine.EventSystems;
 
+// Run after modal windows so one Escape press has exactly one owner.
+[DefaultExecutionOrder(11000)]
 public class PauseMenu : MonoBehaviour
 {
-    [Header("UI Panel de Pausa")]
-    [Tooltip("El GameObject del panel de pausa que contiene los botones y controles de UI.")]
     public GameObject panelPausa;
-
-    [Header("Controles de Sonido")]
-    [Tooltip("Slider de volumen general (opcional).")]
     public Slider sliderVolumen;
+    public string nombreEscenaMenu = "mainmenu";
+    public bool juegoPausado { get; private set; }
+    public static PauseMenu Instance { get; private set; }
+    public static bool IsPaused => Instance != null && Instance.juegoPausado;
+    private float resumeTimeScale = 1f;
+    private CursorLockMode resumeCursorLock;
+    private bool resumeCursorVisible;
+    private bool introductionWasOpen;
+    private bool configured;
+    private GameObject generatedCanvas;
 
-    [Header("Navegación de Escenas")]
-    [Tooltip("Nombre exacto de la escena del Menú Principal.")]
-    public string nombreEscenaMenu = "MainMenu";
-
-    public bool juegoPausado { get; private set; } = false;
+    public static PauseMenu EnsureController()
+    {
+        if (Instance != null && Instance.isActiveAndEnabled) return Instance;
+        PauseMenu[] existing = Object.FindObjectsByType<PauseMenu>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        foreach (PauseMenu candidate in existing)
+        {
+            if (candidate.isActiveAndEnabled) return candidate;
+        }
+        // Never put the input listener on the panel that it has to hide.
+        GameObject host = new GameObject("Pause input controller");
+        PauseMenu controller = host.AddComponent<PauseMenu>();
+        foreach (PauseMenu candidate in existing) candidate.enabled = false;
+        return controller;
+    }
 
     void Awake()
     {
-        // Si no se asignó en el Inspector, intentar usar este mismo GameObject
-        if (panelPausa == null)
+        if (Instance != null && Instance != this)
         {
-            panelPausa = gameObject;
+            enabled = false;
+            return;
         }
-
-        // Ocultar de inmediato el panel en Awake antes de que la escena se renderice
-        if (panelPausa != null)
+        if (panelPausa != null && (panelPausa == gameObject || transform.IsChildOf(panelPausa.transform)))
         {
-            panelPausa.SetActive(false);
+            // Legacy scene: retain public button targets as delegates, move input
+            // to a separate active host before hiding this hierarchy.
+            GameObject oldPanel = panelPausa;
+            enabled = false;
+            PauseMenu replacement = new GameObject("Pause input controller").AddComponent<PauseMenu>();
+            replacement.nombreEscenaMenu = "mainmenu";
+            oldPanel.SetActive(false);
+            return;
         }
-
-        // Asegurar tiempo normal al iniciar
-        Time.timeScale = 1f;
+        Instance = this;
+        if (panelPausa != null) panelPausa.SetActive(false);
+        nombreEscenaMenu = "mainmenu"; // Fix the differently-cased serialized scene name.
+        BuildPausePanel();
+        configured = true;
         juegoPausado = false;
+        panelPausa.SetActive(false);
+        CambiarVolumenGeneral(PlayerPrefs.GetFloat(GameSettings.VolumeKey, 1f));
     }
 
-    void Start()
+    void OnDestroy()
     {
-        // Cargar y aplicar volumen guardado previamente o poner 1 por defecto
-        float volumenGuardado = PlayerPrefs.GetFloat("VolumenGeneral", 1f);
-        AudioListener.volume = volumenGuardado;
-
-        if (sliderVolumen != null)
+        if (Instance != this) return;
+        if (juegoPausado)
         {
-            sliderVolumen.value = volumenGuardado;
-            sliderVolumen.onValueChanged.AddListener(CambiarVolumenGeneral);
+            Time.timeScale = resumeTimeScale;
+            Cursor.lockState = resumeCursorLock;
+            Cursor.visible = resumeCursorVisible;
         }
+        if (generatedCanvas != null) Destroy(generatedCanvas);
+        Instance = null;
     }
 
     void Update()
     {
-        // Detectar presionado de la tecla Escape usando el Nuevo Sistema de Input
+        if (!configured || Instance != this) return;
+        if (sliderVolumen != null && !Mathf.Approximately(sliderVolumen.value, AudioListener.volume))
+            sliderVolumen.SetValueWithoutNotify(AudioListener.volume);
+        if (GameIntroductionUI.IsOpen) { introductionWasOpen = true; return; }
+        if (introductionWasOpen) { introductionWasOpen = false; return; }
+        if (OptionsMenuUI.IsOpen || OptionsMenuUI.EscapeConsumedThisFrame) return;
         if (Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame)
         {
-            if (juegoPausado)
-            {
-                Reanudar();
-            }
-            else
-            {
-                Pausar();
-            }
+            OptionsMenuUI.ConsumeEscapeForCurrentFrame();
+            if (juegoPausado) Reanudar(); else Pausar();
         }
     }
 
     public void Pausar()
     {
+        if (Instance != null && Instance != this) { Instance.Pausar(); return; }
+        if (juegoPausado || OptionsMenuUI.IsOpen || GameIntroductionUI.IsOpen) return;
+        resumeTimeScale = Time.timeScale;
+        resumeCursorLock = Cursor.lockState;
+        resumeCursorVisible = Cursor.visible;
         juegoPausado = true;
-        if (panelPausa != null) panelPausa.SetActive(true);
-
-        Time.timeScale = 0f; // Pausa la física y el tiempo del juego
-
-        // Liberar el cursor para interactuar con el menú
+        OptionsMenuUI.ConsumeEscapeForCurrentFrame();
+        panelPausa.SetActive(true);
+        Time.timeScale = 0f;
         Cursor.lockState = CursorLockMode.None;
         Cursor.visible = true;
+        Button first = panelPausa.GetComponentInChildren<Button>();
+        if (EventSystem.current != null && first != null) EventSystem.current.SetSelectedGameObject(first.gameObject);
     }
 
     public void Reanudar()
     {
+        if (Instance != null && Instance != this) { Instance.Reanudar(); return; }
+        if (GameIntroductionUI.IsOpen) return;
+        OptionsMenuUI.Close();
+        if (!juegoPausado) return;
         juegoPausado = false;
         if (panelPausa != null) panelPausa.SetActive(false);
-
-        Time.timeScale = 1f; // Reanudar el tiempo del juego
-
-        // Bloquear y ocultar el cursor para continuar jugando
-        Cursor.lockState = CursorLockMode.Locked;
-        Cursor.visible = false;
+        Time.timeScale = resumeTimeScale;
+        Cursor.lockState = resumeCursorLock;
+        Cursor.visible = resumeCursorVisible;
+        OptionsMenuUI.ConsumeEscapeForCurrentFrame();
+        if (EventSystem.current != null) EventSystem.current.SetSelectedGameObject(null);
     }
 
-    // Cambiar volumen desde un Slider (0 a 1)
+    public void ShowOptions()
+    {
+        if (Instance != null && Instance != this) { Instance.ShowOptions(); return; }
+        if (!juegoPausado) Pausar();
+        OptionsMenuUI.Show(true);
+    }
+    public void ShowHelp()
+    {
+        if (Instance != null && Instance != this) { Instance.ShowHelp(); return; }
+        if (!juegoPausado) Pausar();
+        GameIntroductionUI.Show(true);
+    }
+
     public void CambiarVolumenGeneral(float volumen)
     {
+        if (Instance != null && Instance != this) { Instance.CambiarVolumenGeneral(volumen); return; }
         AudioListener.volume = Mathf.Clamp01(volumen);
-        PlayerPrefs.SetFloat("VolumenGeneral", AudioListener.volume);
+        PlayerPrefs.SetFloat(GameSettings.VolumeKey, AudioListener.volume);
         PlayerPrefs.Save();
-
-        if (sliderVolumen != null && sliderVolumen.value != AudioListener.volume)
-        {
-            sliderVolumen.value = AudioListener.volume;
-        }
+        if (sliderVolumen != null) sliderVolumen.SetValueWithoutNotify(AudioListener.volume);
     }
+    public void AumentarSonido() { CambiarVolumenGeneral(AudioListener.volume + 0.1f); }
+    public void BajarSonido() { CambiarVolumenGeneral(AudioListener.volume - 0.1f); }
 
-    // Botón Aumentar Sonido (+10%)
-    public void AumentarSonido()
-    {
-        float nuevoVolumen = Mathf.Clamp01(AudioListener.volume + 0.1f);
-        CambiarVolumenGeneral(nuevoVolumen);
-    }
-
-    // Botón Bajar Sonido (-10%)
-    public void BajarSonido()
-    {
-        float nuevoVolumen = Mathf.Clamp01(AudioListener.volume - 0.1f);
-        CambiarVolumenGeneral(nuevoVolumen);
-    }
-
-    // Volver al Menú Principal
     public void VolverAlMenuPrincipal()
     {
-        Time.timeScale = 1f; // IMPORTANTE: Restaurar tiempo antes de cambiar de escena
-        SceneManager.LoadScene(nombreEscenaMenu);
+        if (Instance != null && Instance != this) { Instance.VolverAlMenuPrincipal(); return; }
+        OptionsMenuUI.Close();
+        GameIntroductionUI.Close();
+        juegoPausado = false;
+        Time.timeScale = 1f;
+        Cursor.lockState = CursorLockMode.None;
+        Cursor.visible = true;
+        SceneManager.LoadScene("mainmenu");
+    }
+
+    void BuildPausePanel()
+    {
+        Canvas canvas = OptionsMenuUI.CreateCanvas("Menú de pausa", 2000);
+        generatedCanvas = canvas.gameObject;
+        panelPausa = generatedCanvas;
+        RectTransform backdrop = OptionsMenuUI.CreateRect("Fondo", canvas.transform, Vector2.zero, Vector2.zero);
+        OptionsMenuUI.Stretch(backdrop);
+        backdrop.gameObject.AddComponent<Image>().color = new Color(0.015f, 0.02f, 0.025f, 0.9f);
+        RectTransform card = OptionsMenuUI.CreateRect("Panel", backdrop, Vector2.zero, new Vector2(500f, 480f));
+        card.gameObject.AddComponent<Image>().color = new Color(0.075f, 0.085f, 0.105f);
+        OptionsMenuUI.CreateText(card, "Título", "PAUSA", new Vector2(0f, 188f), new Vector2(430f, 44f), 32, TextAnchor.MiddleCenter);
+        OptionsMenuUI.CreateText(card, "Subtítulo", "Respira. Continúa cuando estés listo.", new Vector2(0f, 148f), new Vector2(440f, 30f), 17, TextAnchor.MiddleCenter);
+        OptionsMenuUI.CreateButton(card, "ResumeButton", "Continuar", new Vector2(0f, 96f), new Vector2(360f, 44f), Reanudar);
+        OptionsMenuUI.CreateButton(card, "PauseOptionsButton", "Opciones", new Vector2(0f, 42f), new Vector2(360f, 44f), ShowOptions);
+        OptionsMenuUI.CreateButton(card, "PauseHelpButton", "Ayuda: cómo jugar", new Vector2(0f, -12f), new Vector2(360f, 44f), ShowHelp);
+        OptionsMenuUI.CreateButton(card, "MainMenuButton", "Volver al menú principal", new Vector2(0f, -66f), new Vector2(360f, 44f), VolverAlMenuPrincipal);
+        OptionsMenuUI.CreateText(card, "Volumen", "Volumen general", new Vector2(0f, -122f), new Vector2(360f, 30f), 18, TextAnchor.MiddleLeft);
+        sliderVolumen = OptionsMenuUI.CreateSlider(card, "PauseVolumeSlider", new Vector2(0f, -160f), 360f, 0f, 1f);
+        sliderVolumen.onValueChanged.AddListener(CambiarVolumenGeneral);
+        OptionsMenuUI.CreateText(card, "Escape", "ESC para continuar", new Vector2(0f, -208f), new Vector2(360f, 24f), 14, TextAnchor.MiddleCenter);
     }
 }

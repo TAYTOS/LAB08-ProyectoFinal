@@ -137,6 +137,10 @@ public class ProceduralLevelGenerator : MonoBehaviour
     public GameObject[] enemyPrefabs;
     [Tooltip("Total de enemigos a instanciar en todo el laberinto al iniciar la partida.")]
     public int totalEnemiesInLevel = 1;
+    public bool roomEntitiesEnabled = true;
+    public int enemiesPerRoom = 1;
+    private NavMeshSurface navigationSurface;
+    private bool rebuildPending;
 
     [Header("Objetos de Entorno Aleatorios")]
     [Tooltip("Prefabs de props (sillas, mesas, monitores, etc.)")]
@@ -200,6 +204,7 @@ public class ProceduralLevelGenerator : MonoBehaviour
 
     void Start()
     {
+        GameplayFeatureInstaller.Install();
         if (useRandomSeed || string.IsNullOrEmpty(levelSeed))
         {
             levelSeed = System.DateTime.Now.Ticks.ToString();
@@ -270,8 +275,10 @@ public class ProceduralLevelGenerator : MonoBehaviour
 
     public void GenerateLevel()
     {
+        if (EntityManager.Instance != null) EntityManager.Instance.ClearAllEntities();
         // Limpiamos el nivel anterior si volvemos a generar
-        if (levelParent != null) Destroy(levelParent);
+        if (levelParent != null) { levelParent.SetActive(false); Destroy(levelParent); }
+        navigationSurface = null;
         levelParent = new GameObject("Environment_Backrooms");
 
         grid = new CellType[mapWidth, mapDepth];
@@ -350,6 +357,7 @@ public class ProceduralLevelGenerator : MonoBehaviour
         
         // 7. --- SPAWN GLOBAL DE ENTIDADES AL FINALIZAR EL NIVEL ---
         SpawnGlobalEnemies();
+        SpawnCalmingPills();
     }
 
     void SpawnGlobalEnemies()
@@ -373,22 +381,71 @@ public class ProceduralLevelGenerator : MonoBehaviour
 
             GameObject prefab = enemyPrefabs[Random.Range(0, enemyPrefabs.Length)];
             
+            GameObject spawnedEntity;
             if (EntityManager.Instance != null)
             {
-                EntityManager.Instance.SpawnEntity(prefab, pos, Quaternion.identity, levelParent.transform);
+                spawnedEntity = EntityManager.Instance.SpawnEntity(prefab, pos, Quaternion.identity, levelParent.transform);
             }
             else
             {
-                Instantiate(prefab, pos, Quaternion.identity, levelParent.transform);
+                spawnedEntity = null;
             }
-            spawned++;
+            if (spawnedEntity != null) spawned++;
         }
     }
 
     void BuildNavMesh()
     {
-        NavMeshSurface surface = levelParent.AddComponent<NavMeshSurface>();
-        surface.BuildNavMesh();
+        if (levelParent == null) return;
+        if (navigationSurface == null) navigationSurface = levelParent.AddComponent<NavMeshSurface>();
+        navigationSurface.collectObjects = CollectObjects.Children;
+        navigationSurface.useGeometry = UnityEngine.AI.NavMeshCollectGeometry.PhysicsColliders;
+        navigationSurface.layerMask = ~((1 << 8) | (1 << 9) | (1 << 10));
+        // Los FBX de muebles pueden tener Read/Write desactivado. PhysX dispone de
+        // sus colisiones cocinadas, pero el constructor de NavMesh necesita vértices
+        // legibles. Un collider simple conserva un obstáculo válido también en build.
+        foreach (MeshCollider meshCollider in levelParent.GetComponentsInChildren<MeshCollider>(true))
+        {
+            if (!meshCollider.enabled || meshCollider.sharedMesh == null || meshCollider.sharedMesh.isReadable) continue;
+            BoxCollider proxy = meshCollider.GetComponent<BoxCollider>();
+            if (proxy == null)
+            {
+                proxy = meshCollider.gameObject.AddComponent<BoxCollider>();
+                proxy.center = meshCollider.sharedMesh.bounds.center;
+                proxy.size = meshCollider.sharedMesh.bounds.size;
+                proxy.isTrigger = meshCollider.isTrigger;
+            }
+            meshCollider.enabled = false;
+        }
+        Physics.SyncTransforms();
+        navigationSurface.BuildNavMesh();
+    }
+
+    public void RequestNavigationRebuild()
+    {
+        if (!rebuildPending && isActiveAndEnabled) StartCoroutine(RebuildNavigationAfterChanges());
+    }
+
+    System.Collections.IEnumerator RebuildNavigationAfterChanges()
+    {
+        rebuildPending = true;
+        yield return null;
+        BuildNavMesh();
+        rebuildPending = false;
+        foreach (EnemyAIController enemy in FindObjectsByType<EnemyAIController>(FindObjectsSortMode.None))
+            enemy.InvalidateNavigation();
+    }
+
+    void SpawnCalmingPills()
+    {
+        RoomData[] rooms = levelParent.GetComponentsInChildren<RoomData>();
+        for (int i = 0; i < rooms.Length; i++)
+        {
+            if (i % 4 != 0 && rooms[i].archetype != RoomArchetype.SafeRoom) continue;
+            Vector3 desired = rooms[i].FloorCenter + Vector3.right * 1.5f;
+            if (EntityManager.TryFindNavigablePoint(desired, rooms[i], out Vector3 position))
+                CalmingPill.Create(position, levelParent.transform);
+        }
     }
 
     void SplitNode(BSPNode node)
@@ -932,6 +989,18 @@ public class ProceduralLevelGenerator : MonoBehaviour
             
             RoomData rd = roomTrigger.AddComponent<RoomData>();
             rd.areaSize = r.width * r.height;
+            rd.archetype = leafNodes[i].archetype;
+            rd.archetypeIntensity = leafNodes[i].archetypeIntensity;
+            rd.ConfigureMovementBounds(new Bounds(
+                new Vector3((r.x + (r.width - 1) * 0.5f) * cellSize, leafNodes[i].roomHeight * 0.5f,
+                    (r.y + (r.height - 1) * 0.5f) * cellSize),
+                new Vector3(Mathf.Max(cellSize, (r.width - 2) * cellSize), leafNodes[i].roomHeight,
+                    Mathf.Max(cellSize, (r.height - 2) * cellSize))));
+            RoomEntityManager population = roomTrigger.AddComponent<RoomEntityManager>();
+            population.possibleEnemies = enemyPrefabs;
+            population.maxEnemiesInRoom = enemiesPerRoom;
+            population.allowSpawn = roomEntitiesEnabled && currentLevel > 0 && leafNodes[i] != startRoom
+                && leafNodes[i] != endRoom && rd.archetype != RoomArchetype.SafeRoom;
             
             // Asignar y emparentar el contenedor de geometría para culling
             rd.geometryContainer = leafNodes[i].geometryContainer;

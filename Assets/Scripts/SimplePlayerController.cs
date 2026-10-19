@@ -10,7 +10,7 @@ public class SimplePlayerController : MonoBehaviour
     public float gravity = -9.81f;
 
     [Header("Cámara (Mirar con el Mouse)")]
-    public float mouseSensitivity = 0.1f;
+    public float mouseSensitivity = GameSettings.DefaultMouseSensitivity;
     public Transform playerCamera;
     
     [Header("Cámara 3ra Persona")]
@@ -27,6 +27,7 @@ public class SimplePlayerController : MonoBehaviour
 
     void Awake()
     {
+        mouseSensitivity = GameSettings.MouseSensitivity;
         isThirdPerson = false; // Forzar a primera persona por defecto
         
         // 1. Configuración Automática del Controlador
@@ -102,7 +103,8 @@ public class SimplePlayerController : MonoBehaviour
     void Update()
     {
         // Si el juego está en pausa, no procesar movimiento ni rotación de cámara
-        if (Time.timeScale == 0f) return;
+        if (Time.timeScale <= 0f || OptionsMenuUI.IsOpen || GameIntroductionUI.IsOpen
+            || OptionsMenuUI.EscapeConsumedThisFrame) return;
 
         Look();
         Move();
@@ -119,6 +121,15 @@ public class SimplePlayerController : MonoBehaviour
             TogglePerspective();
         }
     }
+
+    void OnEnable()
+    {
+        mouseSensitivity = GameSettings.MouseSensitivity;
+        GameSettings.SensitivityChanged += ApplyMouseSensitivity;
+    }
+
+    void OnDisable() { GameSettings.SensitivityChanged -= ApplyMouseSensitivity; }
+    void ApplyMouseSensitivity(float value) { mouseSensitivity = value; }
 
     void TogglePerspective()
     {
