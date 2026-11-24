@@ -51,9 +51,21 @@ public class RoomData : MonoBehaviour
         geometryVisible = visible;
         if (roomRenderers == null) roomRenderers = geometryContainer.GetComponentsInChildren<Renderer>(true);
         if (roomLights == null) roomLights = geometryContainer.GetComponentsInChildren<Light>(true);
-        // Mantener colliders activos permite reconstruir toda la malla, incluso fuera de cámara.
-        foreach (Renderer renderer in roomRenderers) if (renderer != null) renderer.forceRenderingOff = !visible;
-        foreach (Light light in roomLights) if (light != null) light.enabled = visible;
+
+        // Los colliders físicos se mantienen 100% activos y sólidos siempre en todo el nivel.
+        // Solo alternamos la componente de renderizado (MeshRenderer) y las luces para optimizar GPU.
+        foreach (Renderer renderer in roomRenderers)
+        {
+            if (renderer != null)
+            {
+                renderer.enabled = visible;
+                renderer.forceRenderingOff = false;
+            }
+        }
+        foreach (Light light in roomLights)
+        {
+            if (light != null) light.enabled = visible;
+        }
     }
     public Bounds MovementBounds
     {

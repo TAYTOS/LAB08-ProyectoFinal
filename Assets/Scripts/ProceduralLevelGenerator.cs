@@ -622,12 +622,7 @@ public class ProceduralLevelGenerator : MonoBehaviour
         BuildGridPorLayer();
 
         // 6. Optimización de mallas y construcción de NavMesh
-        // Aplicamos el Batching Estático SOLO a los contenedores de geometría por chunk
-        for (int i = 0; i < leafNodes.Count; i++)
-        {
-            if (leafNodes[i].staticContainer != null)
-                StaticBatchingUtility.Combine(leafNodes[i].staticContainer);
-        }
+        // SRP Batcher maneja el batching automáticamente permitiendo culling limpio de MeshRenderers
         BuildNavMesh();
         RepositionPlayerToStartRoom();
         
@@ -2700,11 +2695,8 @@ public class ProceduralLevelGenerator : MonoBehaviour
             population.allowSpawn = roomEntitiesEnabled && currentLevel > 0 && leafNodes[i] != startRoom
                 && leafNodes[i] != endRoom && rd.archetype != RoomArchetype.SafeRoom;
             
-            // Asignar y emparentar el contenedor de geometría para culling
+            // Asignar el contenedor de geometría para culling (permanece bajo levelParent para garantizar colisionadores estáticos sólidos puros)
             rd.geometryContainer = leafNodes[i].geometryContainer;
-            if (rd.geometryContainer != null) {
-                rd.geometryContainer.transform.SetParent(roomTrigger.transform);
-            }
             
             rd.entranceCount = GetEntranceCount(leafNodes[i]);
             

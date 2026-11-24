@@ -31,7 +31,7 @@ public class AnxietyManager : MonoBehaviour
     [Header("Rendimiento y Visibilidad")]
     [Tooltip("Radio de profundidad de renderizado. 1 = Cuarto actual + Adyacentes. 2 = Adyacentes de adyacentes.")]
     [Range(1, 4)]
-    public int visibilityDepth = 1;
+    public int visibilityDepth = 2;
 
     [Header("Muerte por Ansiedad")]
     [Tooltip("Sprite (PNG) para renderizar el jugador muerto en el piso")]
