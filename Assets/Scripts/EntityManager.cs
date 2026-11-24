@@ -76,6 +76,36 @@ public class EntityManager : MonoBehaviour
             collider.height = 1.7f;
             collider.radius = 0.4f;
         }
+        EnemyHealth health = entity.GetComponent<EnemyHealth>();
+        bool esCienpies = entity.GetComponent<CienpiesPeludoGigante>() != null || entity.GetComponent<CienpiesPequeno>() != null;
+        if (health == null) health = entity.AddComponent<EnemyHealth>();
+        if (esCienpies) health.mostrarBarraDeVida = false;
+        health.ResetHealth();
+        if (esCienpies)
+        {
+            EnemyAIController oldController = entity.GetComponent<EnemyAIController>();
+            if (oldController != null) oldController.enabled = false;
+            entity.SetActive(true);
+            NavMeshAgent nav = entity.GetComponent<NavMeshAgent>();
+            if (nav != null && nav.enabled) nav.Warp(spawn);
+            RegisterEntity(entity, false);
+            return entity;
+        }
+
+        MonoBehaviour maniqui = entity.GetComponent("ManiquiLuminoso") as MonoBehaviour;
+        if (maniqui != null)
+        {
+            EnemyAIController oldController = entity.GetComponent<EnemyAIController>();
+            if (oldController != null) oldController.enabled = false;
+            entity.SetActive(true);
+            NavMeshAgent nav = entity.GetComponent<NavMeshAgent>();
+            if (nav != null && nav.enabled) nav.Warp(spawn);
+            GameObject goPlayer = GameObject.FindGameObjectWithTag("Player");
+            maniqui.SendMessage("Initialize", new object[] { homeRoom, goPlayer != null ? goPlayer.transform : null, confinedToRoom }, SendMessageOptions.DontRequireReceiver);
+            RegisterEntity(entity, true);
+            return entity;
+        }
+
         EnemyAIController controller = entity.GetComponent<EnemyAIController>();
         if (controller == null) controller = entity.AddComponent<EnemyAIController>();
         entity.SetActive(true);
@@ -83,8 +113,54 @@ public class EntityManager : MonoBehaviour
         if (navigation != null && navigation.enabled) navigation.Warp(spawn);
         GameObject player = GameObject.FindGameObjectWithTag("Player");
         controller.Initialize(homeRoom, player != null ? player.transform : null, confinedToRoom);
-        if (!activeEntities.Contains(entity)) activeEntities.Add(entity);
+        RegisterEntity(entity, true);
         return entity;
+    }
+
+    /// <summary>
+    /// Registra una entidad en activeEntities.
+    /// Si isHostile es false (ej. ciempiés gigantes o pequeños), no muestra barra de vida de enemigo.
+    /// </summary>
+    public void RegisterEntity(GameObject entity, bool isHostile = true)
+    {
+        if (entity == null) return;
+        if (!activeEntities.Contains(entity)) activeEntities.Add(entity);
+
+        bool esCienpies = entity.GetComponent<CienpiesPeludoGigante>() != null || entity.GetComponent<CienpiesPequeno>() != null;
+        if (esCienpies) isHostile = false;
+
+        EnemyHealth health = entity.GetComponent<EnemyHealth>();
+        if (health != null && !isHostile)
+        {
+            health.mostrarBarraDeVida = false;
+        }
+    }
+
+    public void RegistrarEntidad(GameObject entity, bool esHostil = true)
+    {
+        RegisterEntity(entity, esHostil);
+    }
+
+    public void UnregisterEntity(GameObject entity)
+    {
+        if (entity != null) activeEntities.Remove(entity);
+    }
+
+    /// <summary>
+    /// Determina si una entidad es hostil o pacífica/neutral.
+    /// Los ciempiés (CienpiesPeludoGigante y CienpiesPequeno) se consideran entidades no hostiles (ambientales/transporte).
+    /// </summary>
+    public bool IsHostileEntity(GameObject entity)
+    {
+        if (entity == null || !entity.activeInHierarchy) return false;
+        if (entity.GetComponent<CienpiesPeludoGigante>() != null) return false;
+        if (entity.GetComponent<CienpiesPequeno>() != null) return false;
+        
+        EnemyAIController ai = entity.GetComponent<EnemyAIController>();
+        if (ai != null && ai.enabled) return true;
+        MonoBehaviour maniqui = entity.GetComponent("ManiquiLuminoso") as MonoBehaviour;
+        if (maniqui != null && maniqui.enabled) return true;
+        return true;
     }
 
     public void DespawnEntity(GameObject entity)

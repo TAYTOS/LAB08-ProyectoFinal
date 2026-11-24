@@ -174,7 +174,18 @@ public class PredictiveThrower : MonoBehaviour
         go.name = "Proyectil predictivo"; go.layer = 2;
         go.transform.position = origin; go.transform.localScale = Vector3.one * model.radius * 2f;
         Collider collider = go.GetComponent<Collider>(); collider.enabled = false; Destroy(collider);
-        go.GetComponent<Renderer>().sharedMaterial = projectileMaterial;
+        if (PlayerPowerState.Instance != null && PlayerPowerState.Instance.IsEmpowered)
+        {
+            Material matPower = new Material(projectileMaterial);
+            Color powerCol = PlayerPowerState.Instance.CurrentModeColor;
+            if (matPower.HasProperty("_BaseColor")) matPower.SetColor("_BaseColor", powerCol);
+            if (matPower.HasProperty("_Color")) matPower.color = powerCol;
+            go.GetComponent<Renderer>().sharedMaterial = matPower;
+        }
+        else
+        {
+            go.GetComponent<Renderer>().sharedMaterial = projectileMaterial;
+        }
         BallisticProjectile projectile = go.AddComponent<BallisticProjectile>();
         projectiles.Add(projectile);
         projectile.Initialize(model, velocity, transform, this, dangerRadius,

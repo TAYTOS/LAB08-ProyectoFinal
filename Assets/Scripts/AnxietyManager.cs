@@ -62,7 +62,11 @@ public class AnxietyManager : MonoBehaviour
     {
         currentAnxiety = Mathf.Clamp(currentAnxiety - Mathf.Max(0f, amount), 0f, maxAnxiety);
         deathTimer = 0f;
-        if (currentAnxiety < criticalThreshold) hasTriggeredConsequence = false;
+        if (currentAnxiety < criticalThreshold)
+        {
+            hasTriggeredConsequence = false;
+            LimpiarParedesParanoia();
+        }
         if (currentAnxiety < entitySpawnThreshold) hasTriggeredEntity = false;
         gazeDuration = 0f;
     }
@@ -100,7 +104,7 @@ public class AnxietyManager : MonoBehaviour
         }
     }
 
-    private RoomData currentRoom;
+    public RoomData currentRoom;
     private bool hasTriggeredConsequence = false;
     private bool hasTriggeredEntity = false;
     private HashSet<RoomData> currentlyVisibleRooms = new HashSet<RoomData>();
@@ -108,6 +112,11 @@ public class AnxietyManager : MonoBehaviour
     private float updateTimer = 0f;
     private float logTimer = 0f;
     private float visibilityTimer = 0f;
+
+    // Paredes y distorsiones no procedurales generadas por la paranoia/ansiedad
+    private List<GameObject> activeGlitchWalls = new List<GameObject>();
+    private List<FlickeringLight> activeCorruptedLights = new List<FlickeringLight>();
+    private List<RoomData> corruptedRooms = new List<RoomData>();
 
     // Variables para el filtro visual
     private Volume anxietyVolume;
@@ -188,17 +197,22 @@ public class AnxietyManager : MonoBehaviour
 
     void Update()
     {
-        // Forzar detección inicial del cuarto si el jugador teletransportó y OnTriggerEnter falló
-        if (currentRoom == null)
+        // Forzar detección inicial o actualización continua si el jugador cambió de cuarto o capa vertical
+        if (currentRoom == null || Mathf.Abs(transform.position.y - currentRoom.floorElevation) > 3.2f || !currentRoom.ContainsMovementPoint(transform.position, -1.5f))
         {
-            Collider[] hits = Physics.OverlapSphere(transform.position, 1f);
+            Collider[] hits = Physics.OverlapSphere(transform.position + Vector3.up * 0.5f, 2.2f);
+            RoomData found = null;
+            float bestDistSq = float.MaxValue;
             foreach (var h in hits) {
-                RoomData rd = h.GetComponent<RoomData>();
-                if (rd != null) {
-                    currentRoom = rd;
-                    UpdateRoomVisibility();
-                    break;
+                RoomData rd = h.GetComponent<RoomData>() ?? h.GetComponentInParent<RoomData>();
+                if (rd != null && Mathf.Abs(transform.position.y - rd.floorElevation) <= 3.2f) {
+                    float d = (rd.FloorCenter - transform.position).sqrMagnitude;
+                    if (d < bestDistSq) { bestDistSq = d; found = rd; }
                 }
+            }
+            if (found != null && found != currentRoom)
+            {
+                RecordRoomEntry(found);
             }
         }
 
@@ -223,6 +237,12 @@ public class AnxietyManager : MonoBehaviour
         // Se ejecuta cada frame, es ligero
         CalculateEnvironmentalAnxiety();
         CheckConsequences();
+
+        // Si la ansiedad bajó por debajo del umbral crítico, desaparecer paredes y distorsiones no procedurales
+        if (currentAnxiety < criticalThreshold && activeGlitchWalls.Count > 0)
+        {
+            LimpiarParedesParanoia();
+        }
 
         // Throttle para cálculos pesados de físicas (solo 5 veces por segundo en vez de 60+)
         updateTimer += Time.deltaTime;
@@ -312,63 +332,88 @@ public class AnxietyManager : MonoBehaviour
             cachedRooms = FindObjectsOfType<RoomData>();
         }
         
-        // 1. Apagar todas las geometrías (excepto las que siempre deben renderizarse)
-        foreach(var r in cachedRooms)
+        // 1. Determinar habitación efectiva: si el jugador está en un pasillo o rampa (currentRoom == null),
+        // encontrar la habitación más cercana para mantener la visibilidad activa sin apagar el mapa.
+        RoomData effectiveRoom = currentRoom;
+        if (effectiveRoom == null && cachedRooms != null && cachedRooms.Length > 0)
         {
-            if (r.geometryContainer != null) 
+            float bestDistSq = float.MaxValue;
+            Vector3 playerPos = transform.position;
+            foreach (var r in cachedRooms)
             {
-                r.SetGeometryVisible(r.isAlwaysRendered);
+                if (r == null) continue;
+                float d = (r.MovementBounds.center - playerPos).sqrMagnitude;
+                if (d < bestDistSq)
+                {
+                    bestDistSq = d;
+                    effectiveRoom = r;
+                }
             }
         }
 
-        if (currentRoom == null) return;
-
-        // 2. Usar BFS (Búsqueda en anchura) para encontrar habitaciones hasta la profundidad deseada
+        // 2. Usar BFS (Búsqueda en anchura) para encontrar habitaciones conectadas navegables
         HashSet<RoomData> roomsToShow = new HashSet<RoomData>();
-        Queue<KeyValuePair<RoomData, int>> queue = new Queue<KeyValuePair<RoomData, int>>();
         
-        queue.Enqueue(new KeyValuePair<RoomData, int>(currentRoom, 0));
-        roomsToShow.Add(currentRoom);
-
-        while (queue.Count > 0)
+        if (effectiveRoom != null)
         {
-            var pair = queue.Dequeue();
-            RoomData node = pair.Key;
-            int depth = pair.Value;
+            Queue<KeyValuePair<RoomData, int>> queue = new Queue<KeyValuePair<RoomData, int>>();
+            queue.Enqueue(new KeyValuePair<RoomData, int>(effectiveRoom, 0));
+            roomsToShow.Add(effectiveRoom);
 
-            // Continuar explorando si no hemos alcanzado la profundidad máxima,
-            // O si la habitación está físicamente muy cerca (para evitar voids en pasillos rectos)
-            if (depth < visibilityDepth || Vector3.Distance(transform.position, node.transform.position) < 50f)
+            while (queue.Count > 0)
             {
-                foreach(var adj in node.adjacentRooms)
+                var pair = queue.Dequeue();
+                RoomData node = pair.Key;
+                int depth = pair.Value;
+
+                if (depth < visibilityDepth || Vector3.Distance(transform.position, node.FloorCenter) < 80f)
                 {
-                    if (adj != null && !roomsToShow.Contains(adj))
+                    foreach (var adj in node.adjacentRooms)
                     {
-                        roomsToShow.Add(adj);
-                        queue.Enqueue(new KeyValuePair<RoomData, int>(adj, depth + 1));
+                        if (adj != null && !roomsToShow.Contains(adj))
+                        {
+                            roomsToShow.Add(adj);
+                            if (depth + 1 < visibilityDepth)
+                            {
+                                queue.Enqueue(new KeyValuePair<RoomData, int>(adj, depth + 1));
+                            }
+                        }
                     }
                 }
             }
         }
 
-        // 3. Encender las habitaciones visibles y aplicar cambios de paranoia si aplica
-        foreach(var roomToShow in roomsToShow)
+        // 3. Proximidad visual directa: mantener visibles todas las habitaciones a menos de 80m y las siempre visibles (evita huecos entre capas)
+        Vector3 myPos = transform.position;
+        if (cachedRooms != null)
         {
-            // MECÁNICA DE TERROR PSICOLÓGICO DINÁMICO:
-            // Si la ansiedad es alta, y este cuarto estaba apagado (el jugador no lo estaba viendo),
-            // hay una posibilidad de que su geometría se reconstruya/corrompa justo antes de que lo vea.
-            if (currentAnxiety >= criticalThreshold && !currentlyVisibleRooms.Contains(roomToShow) && roomToShow.isVisited)
+            foreach (var r in cachedRooms)
             {
-                // 15% de probabilidad de reconstruir la arquitectura del cuarto a sus espaldas
-                if (Random.value < 0.15f && roomToShow.illuminationLevel > 0f) 
+                if (r != null && (r.isAlwaysRendered || Vector3.Distance(myPos, r.FloorCenter) < 80f))
                 {
-                    CorruptRoom(roomToShow);
+                    roomsToShow.Add(r);
                 }
             }
+        }
 
-            if (roomToShow.geometryContainer != null) 
+        // 4. Actualizar visibilidad de forma estable sin parpadeos
+        if (cachedRooms != null)
+        {
+            foreach (var r in cachedRooms)
             {
-                roomToShow.SetGeometryVisible(true);
+                if (r == null || r.geometryContainer == null) continue;
+                bool visible = roomsToShow.Contains(r) || r.isAlwaysRendered;
+
+                // Terror dinámico: corrupt room si aplica
+                if (visible && currentAnxiety >= criticalThreshold && !currentlyVisibleRooms.Contains(r) && r.isVisited)
+                {
+                    if (Random.value < 0.15f && r.illuminationLevel > 0f)
+                    {
+                        CorruptRoom(r);
+                    }
+                }
+
+                r.SetGeometryVisible(visible);
             }
         }
 
@@ -377,7 +422,11 @@ public class AnxietyManager : MonoBehaviour
 
     void CalculateEnvironmentalAnxiety()
     {
-        if (PlayerPowerState.Instance != null && PlayerPowerState.Instance.IsEmpowered) return;
+        if (PlayerPowerState.Instance != null && PlayerPowerState.Instance.IsEmpowered)
+        {
+            if (activeGlitchWalls.Count > 0) LimpiarParedesParanoia();
+            return;
+        }
         if (currentRoom == null) return;
 
         // Si estamos en un espacio seguro, la ansiedad baja rápidamente y no se activan fobias
@@ -385,6 +434,7 @@ public class AnxietyManager : MonoBehaviour
         {
             float safeRoomAnxietyChange = -50f; 
             currentAnxiety = Mathf.Clamp(currentAnxiety + safeRoomAnxietyChange * Time.deltaTime, 0f, maxAnxiety);
+            if (activeGlitchWalls.Count > 0) LimpiarParedesParanoia();
             return;
         }
 
@@ -422,6 +472,14 @@ public class AnxietyManager : MonoBehaviour
         // En un espacio seguro somos inmunes a la presencia de entidades
         if (currentRoom != null && currentRoom.archetype == RoomArchetype.SafeRoom) return;
 
+        // Si el jugador está montado en un ciempiés gigante (entidad no enemiga/transporte), la montura calma la ansiedad
+        CienpiesPeludoGigante montura = Object.FindAnyObjectByType<CienpiesPeludoGigante>();
+        if (montura != null && montura.JugadorEstaMontado)
+        {
+            AddAnxiety(-maxAnxiety * 0.03f * 0.2f);
+            return;
+        }
+
         Camera camera = Camera.main;
         EnemyAIController observed = null;
         if (camera != null)
@@ -443,7 +501,7 @@ public class AnxietyManager : MonoBehaviour
             if (gazeDuration >= gazeGraceSeconds)
             {
                 AddAnxiety(maxAnxiety * 0.08f * 0.2f);
-                LastFearReason = "Mirada prolongada a una entidad";
+                LastFearReason = "Mirada prolongada a una entidad hostil";
             }
         }
         else { gazedEntity = null; gazeDuration = 0f; }
@@ -452,7 +510,15 @@ public class AnxietyManager : MonoBehaviour
             foreach (GameObject entity in EntityManager.Instance.activeEntities)
             {
                 if (entity != null && entity.activeInHierarchy && Vector3.Distance(transform.position, entity.transform.position) < 3f)
-                { AddAnxiety(maxAnxiety * 0.02f * 0.2f); break; }
+                {
+                    // Solo las entidades hostiles provocan ansiedad por proximidad.
+                    // Los ciempiés (gigante y pequeños) son entidades neutrales/ambientales.
+                    if (EntityManager.Instance.IsHostileEntity(entity))
+                    {
+                        AddAnxiety(maxAnxiety * 0.02f * 0.2f);
+                        break;
+                    }
+                }
             }
         }
     }
@@ -518,6 +584,7 @@ public class AnxietyManager : MonoBehaviour
 
     void CorruptRoom(RoomData room)
     {
+        if (room == null) return;
         Debug.Log("La paranoia altera tus recuerdos. La arquitectura de un cuarto anterior ha cambiado.");
         
         BoxCollider box = room.GetComponent<BoxCollider>();
@@ -526,6 +593,7 @@ public class AnxietyManager : MonoBehaviour
             // Alterar arquitectura: crear un muro negro gigante en medio del cuarto
             // que bloquee el paso y cambie la forma de navegarlo
             GameObject glitchWall = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            glitchWall.name = "ParanoiaGlitchWall";
             glitchWall.layer = 7;
             glitchWall.transform.SetParent(room.transform);
             glitchWall.transform.position = room.transform.position; 
@@ -539,12 +607,14 @@ public class AnxietyManager : MonoBehaviour
             }
             
             glitchWall.GetComponent<Renderer>().material.color = new Color(0.05f, 0f, 0f); // Casi negro oscuro
+            activeGlitchWalls.Add(glitchWall);
             
             // Generar algunos pilares aleatorios de distorsión
             int pillars = Random.Range(2, 6);
             for(int i = 0; i < pillars; i++)
             {
                 GameObject pillar = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                pillar.name = $"ParanoiaGlitchPillar_{i}";
                 pillar.layer = 7;
                 pillar.transform.SetParent(room.transform);
                 Vector3 randomPos = room.transform.position + new Vector3(
@@ -555,6 +625,7 @@ public class AnxietyManager : MonoBehaviour
                 pillar.transform.position = randomPos;
                 pillar.transform.localScale = new Vector3(Random.Range(1f, 3f), box.size.y, Random.Range(1f, 3f));
                 pillar.GetComponent<Renderer>().material.color = new Color(0.05f, 0f, 0f);
+                activeGlitchWalls.Add(pillar);
             }
             
             // --- NUEVO: Apagón / Parpadeo Agresivo ---
@@ -574,13 +645,103 @@ public class AnxietyManager : MonoBehaviour
                     {
                         fl.ForceOff();
                     }
+
+                    if (!activeCorruptedLights.Contains(fl))
+                    {
+                        activeCorruptedLights.Add(fl);
+                    }
                 }
             }
             
             // Cambiamos el estado interno
+            if (!corruptedRooms.Contains(room)) corruptedRooms.Add(room);
             room.illuminationLevel = 0f; 
             if (ProceduralLevelGenerator.Instance != null) ProceduralLevelGenerator.Instance.RequestNavigationRebuild();
         }
+    }
+
+    /// <summary>
+    /// Elimina y desvanece las paredes, pilares y distorsiones no procedurales cuando la ansiedad baja.
+    /// </summary>
+    public void LimpiarParedesParanoia(bool inmediato = false)
+    {
+        if (activeGlitchWalls.Count == 0 && activeCorruptedLights.Count == 0 && corruptedRooms.Count == 0) return;
+
+        Debug.Log("<b>[Ansiedad]</b> El nivel de ansiedad ha bajado. Las paredes y distorsiones generadas por la paranoia desaparecen.");
+
+        for (int i = activeGlitchWalls.Count - 1; i >= 0; i--)
+        {
+            GameObject wall = activeGlitchWalls[i];
+            if (wall != null)
+            {
+                if (inmediato)
+                {
+                    Destroy(wall);
+                }
+                else
+                {
+                    StartCoroutine(DesvanecerYDestruirPared(wall));
+                }
+            }
+        }
+        activeGlitchWalls.Clear();
+
+        // Restaurar luces afectadas a su estado normal
+        foreach (var fl in activeCorruptedLights)
+        {
+            if (fl != null) fl.Restore();
+        }
+        activeCorruptedLights.Clear();
+
+        // Restaurar nivel de iluminación de los cuartos
+        foreach (var r in corruptedRooms)
+        {
+            if (r != null) r.illuminationLevel = 1.0f;
+        }
+        corruptedRooms.Clear();
+
+        // Reconstruir NavMesh para habilitar los caminos antes bloqueados
+        if (ProceduralLevelGenerator.Instance != null)
+        {
+            ProceduralLevelGenerator.Instance.RequestNavigationRebuild();
+        }
+    }
+
+    IEnumerator DesvanecerYDestruirPared(GameObject obj)
+    {
+        if (obj == null) yield break;
+
+        // Desactivar colisiones inmediatamente para liberar el paso al jugador
+        Collider col = obj.GetComponent<Collider>();
+        if (col != null) col.enabled = false;
+
+        Vector3 scaleInicial = obj.transform.localScale;
+        Renderer ren = obj.GetComponent<Renderer>();
+        Material mat = ren != null ? ren.material : null;
+        Color colorInicial = mat != null ? mat.color : new Color(0.05f, 0f, 0f);
+
+        float duracion = 0.8f;
+        float elapsed = 0f;
+
+        while (elapsed < duracion && obj != null)
+        {
+            elapsed += Time.deltaTime;
+            float t = elapsed / duracion;
+
+            // Disolver encogiendo en escala vertical hacia el suelo
+            obj.transform.localScale = Vector3.Lerp(scaleInicial, new Vector3(scaleInicial.x * 0.8f, 0.01f, scaleInicial.z * 0.8f), t);
+
+            if (mat != null)
+            {
+                Color c = colorInicial;
+                c.a = Mathf.Lerp(1f, 0f, t);
+                mat.color = c;
+            }
+
+            yield return null;
+        }
+
+        if (obj != null) Destroy(obj);
     }
 
     // --- SECUENCIA DE MUERTE ---

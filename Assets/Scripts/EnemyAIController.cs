@@ -78,6 +78,7 @@ public class EnemyAIController : MonoBehaviour
     {
         // Entity, pickup and projectile layers are handled by their own systems.
         obstacleMask = obstacleMask.value & ~((1 << 8) | (1 << 9) | (1 << 10));
+        Ensure<EnemyHealth>();
         steering = Ensure<SteeringAgent>();
         pursuit = Ensure<PursuitBehavior>();
         evasion = Ensure<EvasionBehavior>();
@@ -367,7 +368,8 @@ public class EnemyAIController : MonoBehaviour
 
     public void ReceiveProjectileImpact()
     {
-        if (IsVulnerable) { Defeat(); return; }
+        EnemyHealth health = GetComponent<EnemyHealth>();
+        if (health != null && health.IsDead) { Defeat(); return; }
         if (!initialized) return;
         impactEvadeUntil = Time.time + 3f;
         SelectHidePoint();

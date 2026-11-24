@@ -48,7 +48,7 @@ public class GameplayStatusHUD : MonoBehaviour
         AddLayout(ControlsPanelRect.gameObject, 13, 7);
         status = AddText("Current state", ControlsPanelRect, 18, FontStyle.Bold);
         Text controls = AddText("Controls", ControlsPanelRect, 15, FontStyle.Normal);
-        controls.text = "E: recoger keynotes y pastillas / neutralizar con poder\n" +
+        controls.text = "E: interactuar / atacar con poder | Q / 1-3: modo de daño pastillas\n" +
             "Clic derecho: apuntar | Clic izquierdo / G: lanzar\n" +
             "T: anticipar blanco | Esc: pausa, ayuda y opciones";
         feedback = AddText("Gameplay feedback", ControlsPanelRect, 15, FontStyle.Normal);
@@ -129,11 +129,28 @@ public class GameplayStatusHUD : MonoBehaviour
         if (mission.gameObject.activeSelf != showMission) mission.gameObject.SetActive(showMission);
         if (showMission) { mission.text = missions.currentMissionText; mission.color = missions.currentMissionColor; }
         bool empowered = power != null && power.IsEmpowered;
-        status.text = empowered ? "PASTILLA ACTIVA: " + power.RemainingTime.ToString("0") + " s · Las entidades huyen"
-            : anxiety != null && anxiety.IsCritical ? "ANSIEDAD CRÍTICA · Busca una pastilla verde"
-            : "Explora con cuidado · Reúne los keynotes";
-        status.color = empowered ? new Color(0.6f, 1f, 0.7f) : Color.white;
+        string powerModeInfo = power != null ? $"[Poder: {power.currentPowerMode} ({power.CurrentDamage} Daño)]" : "";
+        if (empowered)
+        {
+            status.text = $"PASTILLA ACTIVA: {power.RemainingTime:0} s · Daño: {power.CurrentDamage} HP ({power.currentPowerMode})";
+            status.color = power.CurrentModeColor;
+        }
+        else if (anxiety != null && anxiety.IsCritical)
+        {
+            status.text = $"ANSIEDAD CRÍTICA · Busca una pastilla {powerModeInfo}";
+            status.color = new Color(1f, 0.4f, 0.4f);
+        }
+        else
+        {
+            status.text = $"Explora con cuidado · {powerModeInfo}";
+            status.color = Color.white;
+        }
+
         feedback.text = "Entidades neutralizadas: " + (power != null ? power.DefeatedEntities : 0);
+        if (power != null)
+        {
+            feedback.text += $"\nModo activo: {power.CurrentModeName} (Pulsa Q o 1-3)";
+        }
         if (thrower != null && thrower.HasImpactComparison)
             feedback.text += "\nDiferencia del impacto previsto: " + thrower.LastPredictionError.ToString("0.00") + " m";
         if (thrower != null && thrower.leadTargeting)

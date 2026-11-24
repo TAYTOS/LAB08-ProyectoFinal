@@ -105,15 +105,48 @@ public class BallisticProjectile : MonoBehaviour
     {
         IsFlying = false; ClearDanger();
         if (thrower != null) thrower.RecordImpact(this, hit.point, FlightTime);
-        EnemyAIController enemy = hit.collider == null ? null : hit.collider.GetComponentInParent<EnemyAIController>();
-        if (enemy != null) enemy.ReceiveProjectileImpact();
+
+        // Calcular daño según si el jugador tiene pastilla activa
+        bool empowered = PlayerPowerState.Instance != null && PlayerPowerState.Instance.IsEmpowered;
+        float danio = empowered ? PlayerPowerState.Instance.CurrentDamage : 15f;
+
+        // Aplicar daño a la salud del enemigo directamente
+        EnemyHealth directHealth = hit.collider == null ? null : hit.collider.GetComponentInParent<EnemyHealth>();
+        if (directHealth != null && !directHealth.IsDead)
+        {
+            directHealth.TakeDamage(danio, hit.point);
+        }
+        else
+        {
+            // Fallback para controladores que no tengan EnemyHealth aún
+            EnemyAIController enemy = hit.collider == null ? null : hit.collider.GetComponentInParent<EnemyAIController>();
+            if (enemy != null) enemy.ReceiveProjectileImpact();
+            else hit.collider?.SendMessageUpwards("ReceiveProjectileImpact", SendMessageOptions.DontRequireReceiver);
+        }
+
+        // Si la pastilla está activa, infligir daño residual en área a enemigos cercanos
+        if (empowered && radiusOfDanger > 0.5f)
+        {
+            Collider[] colliders = Physics.OverlapSphere(hit.point, radiusOfDanger, ~((1 << 2) | (1 << 9)));
+            foreach (var col in colliders)
+            {
+                if (col == hit.collider) continue;
+                EnemyHealth splashHealth = col.GetComponentInParent<EnemyHealth>();
+                if (splashHealth != null && splashHealth != directHealth && !splashHealth.IsDead)
+                {
+                    splashHealth.TakeDamage(danio * 0.6f, col.bounds.center);
+                }
+            }
+        }
+
         transform.position = hit.point;
         effectScale = Vector3.one * model.radius * 5f;
         transform.localScale = effectScale; effectTime = 0.18f;
         if (TryGetComponent<Renderer>(out var renderer)) {
             var block = new MaterialPropertyBlock();
-            block.SetColor("_BaseColor", new Color(1f, 0.4f, 0.08f));
-            block.SetColor("_Color", new Color(1f, 0.4f, 0.08f));
+            Color colorImpacto = empowered ? PlayerPowerState.Instance.CurrentModeColor : new Color(1f, 0.4f, 0.08f);
+            block.SetColor("_BaseColor", colorImpacto);
+            block.SetColor("_Color", colorImpacto);
             renderer.SetPropertyBlock(block);
         }
     }

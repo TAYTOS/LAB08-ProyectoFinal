@@ -20,6 +20,10 @@ public class RoomData : MonoBehaviour
     [Range(0f, 1f)]
     public float archetypeIntensity = 0f;
 
+    [Header("Capa Vertical (Layer)")]
+    public int layerIndex = 0;
+    public float floorElevation = 0f;
+
     [Header("Propiedades de la Habitación")]
     public float areaSize;
     public int entranceCount;
@@ -61,7 +65,8 @@ public class RoomData : MonoBehaviour
         }
     }
 
-    public Vector3 FloorCenter => new Vector3(MovementBounds.center.x, 0f, MovementBounds.center.z);
+    public Vector3 FloorCenter => new Vector3(MovementBounds.center.x, floorElevation, MovementBounds.center.z);
+    public Vector3 RoomSize => MovementBounds.size;
 
     public void ConfigureMovementBounds(Bounds bounds) { movementBounds = bounds; }
 

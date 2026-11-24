@@ -78,4 +78,29 @@ public class FlickeringLight : MonoBehaviour
         }
         this.enabled = false; // Desactivar el script
     }
+
+    /// <summary>
+    /// Restaura la luz a su funcionamiento normal cuando la ansiedad disminuye.
+    /// </summary>
+    public void Restore()
+    {
+        isCorrupted = false;
+        this.enabled = true;
+        if (myLights != null)
+        {
+            for (int i = 0; i < myLights.Length; i++)
+            {
+                if (myLights[i] != null)
+                {
+                    myLights[i].color = Color.white;
+                    if (baseIntensities != null && i < baseIntensities.Length)
+                    {
+                        myLights[i].intensity = baseIntensities[i];
+                    }
+                }
+            }
+        }
+        StopAllCoroutines();
+        StartCoroutine(FlickerRoutine());
+    }
 }

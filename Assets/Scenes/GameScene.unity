@@ -2972,9 +2972,9 @@ MonoBehaviour:
     illuminationOffset: 0
     clutterOffset: 0
   progressionSettings:
-    level0MapWidth: 20
-    level0MapDepth: 20
-    level0Keynotes: 3
+    level0MapWidth: 30
+    level0MapDepth: 30
+    level0Keynotes: 1
     level0Enemies: 0
     baseMapWidth: 40
     baseMapDepth: 40
@@ -2986,12 +2986,32 @@ MonoBehaviour:
     maxLevel: 2
   useRandomSeed: 1
   levelSeed: MI_SEMILLA
-  mapWidth: 20
-  mapDepth: 20
+  seedActual: 0
+  mapWidth: 150
+  mapDepth: 150
   minRoomSize: 4
   cellSize: 2
   minWallHeight: 4
   maxWallHeight: 120
+  maxLevelHeight: 150
+  maxLayers: 6
+  layerHeight: 6
+  escogerStartRoomPrimero: 1
+  maxMicroDesnivel: 0.8
+  probabilidadMicroDesnivel: 0.35
+  usarRectangulosConsecutivos: 1
+  distanciaMinimaStartEnd: 0.8
+  tamanoMinimoRectangulo: 4
+  tamanoMaximoRectangulo: 8
+  umbralDimensionHall: 7
+  grosorParedMinimo: 1
+  grosorParedMaximo: 3
+  profundidadMaximaArbol: 4
+  probabilidadRamificacion: 0.65
+  maxHijosPorCuarto: 2
+  probabilidadConexionesCruzadas: 0.2
+  tamanoMinimoEntradaVertical: 2
+  tamanoMaximoEntradaVertical: 4
   archetypeSettings:
   - archetype: 4
     baseProbability: 0
@@ -3193,7 +3213,20 @@ MonoBehaviour:
   numberOfKeynotes: 1
   enemyPrefabs:
   - {fileID: 3752832170189155273, guid: 9e076526ccbe8924a94bb32eaaf7def5, type: 3}
+  - {fileID: 2706799682320172140, guid: 5a6b7c8d9e0f123456789abcdef43210, type: 3}
   totalEnemiesInLevel: 1
+  roomEntitiesEnabled: 1
+  enemiesPerRoom: 1
+  cienpiesPeludoPrefab: {fileID: 0}
+  cienpiesPequenoPrefab: {fileID: 0}
+  cantidadCienpiesPequenos: 8
+  spawnCienpiesPeludo: 1
+  spawnCienpiesPequenos: 1
+  maniquiLuminosoPrefab: {fileID: 0}
+  spawnManiquiLuminoso: 1
+  generarArquitectura3D: 1
+  probabilidadHabitacion3D: 0.85
+  minimoHabitaciones3D: 2
   objectPrefabs:
   - {fileID: 7362323266672293172, guid: b35dedcba4f488545983eb50a885bd84, type: 3}
   - {fileID: 5233006353902838768, guid: 225b34d067392c9458fab1749df97f58, type: 3}
@@ -3474,6 +3507,12 @@ MonoBehaviour:
   walkSpeed: 5
   sprintSpeed: 8
   gravity: -9.81
+  jumpHeight: 2.2
+  coyoteTime: 0.18
+  jumpBufferTime: 0.15
+  groundCheckLayers:
+    serializedVersion: 2
+    m_Bits: 4294967295
   mouseSensitivity: 2
   playerCamera: {fileID: 0}
   isThirdPerson: 1
@@ -3528,6 +3567,9 @@ MonoBehaviour:
   deadPlayerSprite: {fileID: 21300000, guid: fae41ddd3bd142840856009ce90abad8, type: 3}
   timeToDie: 5
   isDead: 0
+  quickExitSeconds: 3
+  gazeGraceSeconds: 2
+  currentRoom: {fileID: 0}
 --- !u!135 &1874451950
 SphereCollider:
   m_ObjectHideFlags: 0
